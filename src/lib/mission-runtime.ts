@@ -189,7 +189,9 @@ export type MissionProgressUpdate = {
 };
 
 export const __missionRuntimeTestUtils = {
+  createArtifactHandoffDeepAgent,
   createDeepAgentSkillFiles,
+  createNativeArtifactClosureInput,
   ensureSkillFrontmatter,
   normalizeDeepAgentSkillName,
 };
@@ -397,23 +399,7 @@ export function createMetaAgentDefinition(
     },
   );
 
-  const submitArtifact = tool(
-    ({ filename, content }) =>
-      JSON.stringify({
-        files: {
-          [`/artifacts/${sanitizeFilename(filename)}`]: createDeepAgentTextFile(content),
-        },
-      }),
-    {
-      name: "submit_artifact",
-      description:
-        "Submit a complete final user-facing artifact. Use this before finishing any mission that produces an app, document, deck, report, script, or other deliverable.",
-      schema: z.object({
-        filename: z.string().describe("Final artifact filename such as index.html, src/App.jsx, deck.md, report.md, or script.js."),
-        content: z.string().describe("Complete artifact content. Do not pass a summary or placeholder."),
-      }),
-    },
-  );
+  const submitArtifact = createSubmitArtifactTool();
 
   const researcher: SubAgent = {
     name: "researcher",
@@ -465,6 +451,22 @@ export function createMetaDeepAgent(
     tools: createMetaAgentTools(registry),
     skills: ["/skills/"],
     subagents: definition.subagents,
+  });
+}
+
+function createArtifactHandoffDeepAgent(model?: BaseLanguageModel) {
+  return createDeepAgent({
+    model,
+    systemPrompt: [
+      "You are Artifact Handoff Agent.",
+      "Your only job is to produce complete final user-facing files from the existing mission context.",
+      "Do not plan, delegate, assign tasks, search capabilities, create agents, or summarize instead of producing files.",
+      "Use write_file under /artifacts/ and call submit_artifact with the complete final file content before ending.",
+      "If the mission can be satisfied by one web file, write and submit /artifacts/index.html.",
+      "If unsure, produce the smallest usable MVP artifact that directly satisfies the mission.",
+    ].join(" "),
+    tools: [createSubmitArtifactTool()],
+    subagents: [],
   });
 }
 
@@ -993,8 +995,9 @@ async function runNativeDeepAgentMission(
         result,
         output,
       );
+      const closureAgent = createArtifactHandoffDeepAgent(model) as DeepAgentRunner;
       const closure = await runNativeDeepAgentWithEvents(
-        agent,
+        closureAgent,
         closureInput,
         preview,
         events,
@@ -1122,7 +1125,7 @@ function buildNativeDeepAgentPreview(
 
 function createNativeArtifactClosureInput(
   mission: string,
-  skillFiles: Record<string, DeepAgentSkillFile>,
+  _skillFiles: Record<string, DeepAgentSkillFile>,
   previousResult: unknown,
   previousOutput: string,
 ) {
@@ -1135,20 +1138,28 @@ function createNativeArtifactClosureInput(
           "",
           "Complete the native DeepAgents artifact handoff before any fallback is allowed.",
           "You already planned and inspected context. Now finish the smallest usable MVP deliverable.",
+          "Do not call assign_task, task delegation, create_ephemeral_agent, or search_capabilities.",
           "Use write_file under /artifacts/ and call submit_artifact with the complete final file content.",
           "For a single-file web app, submit /artifacts/index.html.",
           "Do not return only a summary. Do not ask questions. Do not create a planning page.",
           "",
           "Previous native DeepAgents output:",
-          previousOutput.trim() || "No text output.",
+          summarizePreviousNativeOutput(previousOutput),
         ].join("\n"),
       },
     ],
-    files: {
-      ...skillFiles,
-      ...extractDeepAgentFileRecord(previousResult),
-    },
+    files: extractArtifactFileRecord(previousResult),
   };
+}
+
+function summarizePreviousNativeOutput(output: string): string {
+  const trimmed = output.trim();
+  if (!trimmed) {
+    return "No text output.";
+  }
+
+  const compact = trimmed.replace(/\s+/g, " ");
+  return compact.length > 2000 ? `${compact.slice(0, 2000).trim()}...` : compact;
 }
 
 async function runFallbackDirectMissionAfterNativeAttempt(
@@ -1382,10 +1393,34 @@ async function runNativeDeepAgentWithEvents(
 
   try {
     for await (const streamEvent of agent.streamEvents(input, { version: "v2" })) {
+      const eventFiles = extractStreamEventFiles(streamEvent);
       streamedFiles = {
         ...streamedFiles,
-        ...extractStreamEventFiles(streamEvent),
+        ...eventFiles,
       };
+      if (
+        isEarlyArtifactStreamEvent(streamEvent) &&
+        extractArtifactsFromDeepAgentFiles({ files: eventFiles }).length > 0
+      ) {
+        const message = formatDeepAgentStreamEvent(streamEvent);
+        if (message) {
+          events = appendUniqueRuntimeEvent(events, streamEventType(message), message);
+          await onProgress?.({
+            stage: progressStageForStreamMessage(message),
+            preview: {
+              ...preview,
+              events,
+              finalBrief: message,
+              mode: "deepagents",
+              provider,
+            },
+          });
+        }
+        return {
+          result: mergeDeepAgentRunResult(result ?? "", streamedFiles),
+          events,
+        };
+      }
 
       const output = extractStreamEventOutput(streamEvent);
       if (output !== undefined) {
@@ -1399,7 +1434,7 @@ async function runNativeDeepAgentWithEvents(
 
       events = appendUniqueRuntimeEvent(events, streamEventType(message), message);
       await onProgress?.({
-        stage: "planning",
+        stage: progressStageForStreamMessage(message),
         preview: {
           ...preview,
           events,
@@ -1418,6 +1453,30 @@ async function runNativeDeepAgentWithEvents(
     events,
     error: streamError,
   };
+}
+
+function isEarlyArtifactStreamEvent(event: unknown): boolean {
+  if (!event || typeof event !== "object") {
+    return false;
+  }
+
+  const value = event as Record<string, unknown>;
+  return (
+    value.event === "on_tool_end" &&
+    (value.name === "write_file" ||
+      value.name === "submit_artifact" ||
+      value.name === "task")
+  );
+}
+
+function progressStageForStreamMessage(message: string): MissionProgressStage {
+  if (message.includes("write_file") || message.includes("submitted artifact")) {
+    return "building";
+  }
+  if (message.includes("completed task") || message.includes("completed tool")) {
+    return "reviewing";
+  }
+  return "planning";
 }
 
 export async function runMissionIteration(
@@ -2301,12 +2360,12 @@ function formatAgentRuntimeContext(agent: AgentProfile): string {
     `Skill labels: ${agent.skills.join(", ") || "none"}`,
     skillDetails.length
       ? [
-          "Installed skill documents:",
+          "Installed skill references:",
           ...skillDetails.map((skill) =>
             [
               `## ${skill.name} (${skill.id})`,
               skill.description,
-              summarizeMarkdown(skill.markdown),
+              skill.originUrl ? `Origin: ${skill.originUrl}` : "",
             ].join("\n"),
           ),
         ].join("\n")
@@ -2314,15 +2373,6 @@ function formatAgentRuntimeContext(agent: AgentProfile): string {
   ]
     .filter(Boolean)
     .join("\n\n");
-}
-
-function summarizeMarkdown(markdown: string): string {
-  const trimmed = markdown.trim();
-  if (trimmed.length <= 1200) {
-    return trimmed;
-  }
-
-  return `${trimmed.slice(0, 1200).trim()}\n...`;
 }
 
 function formatReviewOutput(review: MissionReview): string {
@@ -2559,6 +2609,13 @@ function extractDeepAgentFileRecord(result: unknown): Record<string, unknown> {
   }
 
   return files as Record<string, unknown>;
+}
+
+function extractArtifactFileRecord(result: unknown): Record<string, unknown> {
+  const files = extractDeepAgentFileRecord(result);
+  return Object.fromEntries(
+    Object.entries(files).filter(([path]) => path.trim().replace(/\\/g, "/").startsWith("/artifacts/")),
+  );
 }
 
 function filenameFromDeepAgentFilePath(rawPath: string): string | null {
@@ -2906,7 +2963,11 @@ function createMetaAgentTools(registry: Capability[]) {
     },
   );
 
-  const submitArtifact = tool(
+  return [searchCapabilities, createEphemeral, assignTask, createSubmitArtifactTool()];
+}
+
+function createSubmitArtifactTool() {
+  return tool(
     ({ filename, content }) =>
       JSON.stringify({
         files: {
@@ -2923,8 +2984,6 @@ function createMetaAgentTools(registry: Capability[]) {
       }),
     },
   );
-
-  return [searchCapabilities, createEphemeral, assignTask, submitArtifact];
 }
 
 function selectCapabilities(mission: string, registry: Capability[]): Capability[] {

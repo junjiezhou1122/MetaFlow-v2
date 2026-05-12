@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("deepagents", () => ({
-  createDeepAgent: ({ model }: { model: { invoke(input: unknown): Promise<unknown> } }) => ({
+  createDeepAgent: ({
+    model,
+    tools,
+  }: {
+    model: { invoke(input: unknown): Promise<unknown> };
+    tools?: Array<{ name?: string }>;
+  }) => ({
+    __toolNames: tools?.map((tool) => tool.name),
     invoke: (input: unknown) => model.invoke(input),
     streamEvents:
       "streamEvents" in model
@@ -74,6 +81,45 @@ describe("mission runtime", () => {
         "submit_artifact",
       ]),
     );
+  });
+
+  it("uses an artifact-only DeepAgents handoff agent for closure", () => {
+    const handoff = __missionRuntimeTestUtils.createArtifactHandoffDeepAgent({
+      invoke: async () => ({}),
+    } as never) as unknown as { __toolNames?: string[] };
+
+    expect(handoff.__toolNames).toEqual(["submit_artifact"]);
+    expect(handoff.__toolNames).not.toContain("assign_task");
+    expect(handoff.__toolNames).not.toContain("search_capabilities");
+    expect(handoff.__toolNames).not.toContain("create_ephemeral_agent");
+  });
+
+  it("keeps artifact handoff input free of skill documents", () => {
+    const input = __missionRuntimeTestUtils.createNativeArtifactClosureInput(
+      "生成一个网页应用",
+      {
+        "/skills/noisy/SKILL.md": {
+          path: "/skills/noisy/SKILL.md",
+          content: "large irrelevant skill document",
+          mimeType: "text/markdown",
+          created_at: "2026-05-12T00:00:00.000Z",
+          modified_at: "2026-05-12T00:00:00.000Z",
+        },
+      },
+      {
+        files: {
+          "/skills/waapi/SKILL.md": {
+            content: "irrelevant waapi document",
+          },
+          "/artifacts/draft.html": {
+            content: "<!doctype html><html><body>Draft</body></html>",
+          },
+        },
+      },
+      "previous output",
+    );
+
+    expect(Object.keys(input.files)).toEqual(["/artifacts/draft.html"]);
   });
 
   it("materializes agent skills as DeepAgents SKILL.md files", () => {
@@ -820,6 +866,55 @@ describe("mission runtime", () => {
     expect(preview.finalBrief).toContain("Native DeepAgents");
     expect(preview.artifacts?.[0]?.filename).toBe("index.html");
     expect(preview.artifacts?.[0]?.content).toContain("poll");
+  });
+
+  it("finishes native DeepAgents as soon as an artifact file is written", async () => {
+    let yieldedAfterArtifact = false;
+    const model = {
+      withConfig: () => model,
+      async *streamEvents() {
+        yield {
+          event: "on_tool_end",
+          name: "write_file",
+          data: {
+            output: {
+              update: {
+                files: {
+                  "/artifacts/index.html": {
+                    content:
+                      "<!doctype html><html><body><main>Poll<button>Vote</button><script>localStorage.setItem('early-poll','[]')</script></main></body></html>",
+                    mimeType: "text/html",
+                    created_at: "2026-05-12T00:00:00.000Z",
+                    modified_at: "2026-05-12T00:00:00.000Z",
+                  },
+                },
+              },
+            },
+          },
+        };
+        yieldedAfterArtifact = true;
+        yield {
+          event: "on_tool_start",
+          name: "slow_summary",
+          data: {},
+        };
+      },
+      invoke: async () => {
+        throw new Error("Native stream path should not call invoke.");
+      },
+    };
+
+    const preview = await runMultiAgentMission(
+      "做一个投票应用",
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+    );
+
+    expect(yieldedAfterArtifact).toBe(false);
+    expect(preview.error).toBeUndefined();
+    expect(preview.artifacts?.[0]?.filename).toBe("index.html");
+    expect(preview.artifacts?.[0]?.content).toContain("early-poll");
   });
 
   it("runs a native DeepAgents closure pass before falling back when no artifact is submitted", async () => {
