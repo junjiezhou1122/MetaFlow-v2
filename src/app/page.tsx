@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   formatMissionTimestamp,
@@ -896,6 +896,7 @@ function ArtifactItem(props: {
   artifact: MissionArtifact;
   artifacts: MissionArtifact[];
 }) {
+  const artifactRef = useRef<HTMLElement | null>(null);
   const previewHtml = createPreviewDocument(props.artifact, props.artifacts);
   const [activeView, setActiveView] = useState<"preview" | "code">(
     previewHtml ? "preview" : "code",
@@ -903,8 +904,31 @@ function ArtifactItem(props: {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const sizeLabel = `${(props.artifact.content.length / 1024).toFixed(1)} KB`;
 
+  useEffect(() => {
+    function syncFullscreenState() {
+      setIsFullscreen(document.fullscreenElement === artifactRef.current);
+    }
+
+    document.addEventListener("fullscreenchange", syncFullscreenState);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreenState);
+  }, []);
+
+  async function toggleFullscreen() {
+    if (!artifactRef.current) {
+      return;
+    }
+
+    if (document.fullscreenElement === artifactRef.current) {
+      await document.exitFullscreen();
+      return;
+    }
+
+    setActiveView("preview");
+    await artifactRef.current.requestFullscreen();
+  }
+
   return (
-    <article className={`artifactItem ${isFullscreen ? "fullscreenArtifact" : ""}`}>
+    <article className="artifactItem" ref={artifactRef}>
       <div className="artifactMeta">
         <div>
           <strong>{props.artifact.filename}</strong>
@@ -923,7 +947,7 @@ function ArtifactItem(props: {
             </button>
           ) : null}
           {previewHtml ? (
-            <button type="button" onClick={() => setIsFullscreen((value) => !value)}>
+            <button type="button" onClick={() => void toggleFullscreen()}>
               {isFullscreen ? "Exit" : "Fullscreen"}
             </button>
           ) : null}

@@ -810,26 +810,30 @@ input:focus {
   width: 100%;
 }
 
-.fullscreenArtifact {
-  background: var(--surface);
-  inset: 0;
-  padding: 14px;
-  position: fixed;
-  z-index: 20;
-}
-
-.fullscreenArtifact .artifactMeta {
-  min-height: 42px;
-}
-
-.fullscreenArtifact .artifactPreview {
-  height: calc(100vh - 82px);
-  min-height: 0;
-}
-
 .artifactItem strong {
   font-weight: 500;
   margin-top: 0;
+}
+
+.artifactItem:fullscreen {
+  background: var(--surface);
+  display: grid;
+  gap: 0;
+  grid-template-rows: auto 1fr;
+  padding: 0;
+}
+
+.artifactItem:fullscreen .artifactMeta {
+  background: rgb(255 254 250 / 0.96);
+  border-bottom: 1px solid var(--line);
+  padding: 8px 12px;
+  z-index: 1;
+}
+
+.artifactItem:fullscreen .artifactPreview {
+  border: 0;
+  height: 100%;
+  min-height: 0;
 }
 
 .artifactItem small {
