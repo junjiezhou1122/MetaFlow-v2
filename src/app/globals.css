@@ -400,52 +400,54 @@ button {
   min-height: 230px;
 }
 
-.marketAgentGrid {
+.marketLayout {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: minmax(0, 1fr) 360px;
 }
 
-.marketAgentCard {
+.marketAgentGrid {
+  align-content: start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.marketAgentGrid > button {
   background: rgb(255 254 250 / 0.72);
   border: 1px solid var(--line);
+  color: var(--ink);
   display: grid;
-  gap: 12px;
-  grid-template-rows: auto 1fr auto;
-  min-height: 178px;
+  gap: 8px;
+  min-height: 150px;
   padding: 12px;
+  text-align: left;
 }
 
-.marketAgentTop {
-  align-items: start;
-  display: flex !important;
-  gap: 12px !important;
-  justify-content: space-between;
+.marketAgentGrid > button.selected,
+.marketAgentGrid > button:hover {
+  border-color: var(--accent);
 }
 
-.marketAgentTop div {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.marketAgentCard span,
-.marketAgentCard small {
+.marketAgentGrid span,
+.marketAgentGrid small,
+.marketAgentDetail span,
+.marketDetailSource a {
   color: var(--muted);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 12px;
 }
 
-.marketAgentCard strong {
+.marketAgentGrid strong {
   font-size: 17px;
   font-weight: 500;
   line-height: 1.2;
 }
 
-.marketAgentCard p {
+.marketAgentGrid p {
   color: var(--muted);
   display: -webkit-box;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.42;
   margin: 0;
   overflow: hidden;
@@ -453,21 +455,57 @@ button {
   -webkit-line-clamp: 3;
 }
 
-.marketAgentCard button {
-  background: var(--ink);
-  border: 1px solid var(--ink);
-  color: var(--surface);
-  flex: 0 0 auto;
-  min-height: 32px;
-  min-width: 64px;
-  padding: 0 10px;
+.marketAgentDetail {
+  align-content: start;
+  background: rgb(255 254 250 / 0.78);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  position: sticky;
+  top: 18px;
 }
 
-.marketAgentCard button:disabled {
+.marketDetailTop {
+  align-items: start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.marketDetailTop div {
+  display: grid;
+  gap: 6px;
+}
+
+.marketDetailTop strong {
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.15;
+}
+
+.marketDetailTop button {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  flex: 0 0 auto;
+  min-height: 34px;
+  min-width: 72px;
+  padding: 0 12px;
+}
+
+.marketDetailTop button:disabled {
   background: transparent;
   border-color: var(--line);
   color: var(--muted);
   cursor: default;
+}
+
+.marketAgentDetail p,
+.marketAgentDetail li {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 .marketSkillRow {
@@ -480,6 +518,29 @@ button {
   border: 1px solid var(--line);
   line-height: 1;
   padding: 5px 6px;
+}
+
+.marketDetailBlock {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+}
+
+.marketDetailBlock p {
+  margin: 0;
+}
+
+.marketDetailBlock ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.marketDetailSource {
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  padding-top: 12px;
 }
 
 .narrowStack {
@@ -1194,9 +1255,14 @@ input:focus {
   .inlineActions,
   .agentEditorGrid,
   .libraryGrid,
+  .marketLayout,
   .providerToggle,
   .starterStrip {
     grid-template-columns: 1fr;
+  }
+
+  .marketAgentDetail {
+    position: static;
   }
 
   .artifactMeta,

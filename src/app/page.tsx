@@ -60,6 +60,7 @@ export default function Home() {
   const [agents, setAgents] = useState<AgentProfile[]>([]);
   const [marketAgents, setMarketAgents] = useState<MarketAgent[]>([]);
   const [agentView, setAgentView] = useState<"mine" | "market">("mine");
+  const [selectedMarketAgentId, setSelectedMarketAgentId] = useState("");
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [agentDraft, setAgentDraft] = useState<AgentProfile | null>(null);
   const [agentSaved, setAgentSaved] = useState(false);
@@ -129,6 +130,7 @@ export default function Home() {
       const data = (await response.json()) as { agents?: MarketAgent[] };
       if (Array.isArray(data.agents)) {
         setMarketAgents(data.agents);
+        setSelectedMarketAgentId((current) => current || data.agents?.[0]?.marketId || "");
       }
     } catch {
       setError("Could not load agency market.");
@@ -463,12 +465,14 @@ export default function Home() {
             agentView={agentView}
             selectedAgentId={selectedAgentId}
             marketAgents={marketAgents}
+            selectedMarketAgentId={selectedMarketAgentId}
             onAgentChange={setAgentDraft}
             onCreateAgent={createAgentDraft}
             onInstallMarketAgent={installMarketAgent}
             onSaveAgent={saveAgent}
             onSelectAgent={selectAgent}
             onSelectAgentView={setAgentView}
+            onSelectMarketAgent={setSelectedMarketAgentId}
           />
         )}
 
@@ -778,16 +782,22 @@ function AgentsView(props: {
   agentView: "mine" | "market";
   marketAgents: MarketAgent[];
   selectedAgentId: string;
+  selectedMarketAgentId: string;
   onAgentChange: (agent: AgentProfile) => void;
   onCreateAgent: () => void;
   onInstallMarketAgent: (marketId: string) => void | Promise<void>;
   onSaveAgent: () => void;
   onSelectAgent: (agentId: string) => void;
   onSelectAgentView: (view: "mine" | "market") => void;
+  onSelectMarketAgent: (marketId: string) => void;
 }) {
   const installedMarketIds = new Set(
     props.agents.map((agent) => agent.marketId).filter(Boolean),
   );
+  const selectedMarketAgent =
+    props.marketAgents.find((agent) => agent.marketId === props.selectedMarketAgentId) ??
+    props.marketAgents[0] ??
+    null;
 
   return (
     <div className="agentsCenter">
@@ -889,33 +899,71 @@ function AgentsView(props: {
             ) : null}
           </div>
         ) : (
-          <div className="marketAgentGrid">
-            {props.marketAgents.map((agent) => {
-              const installed = installedMarketIds.has(agent.marketId);
-              return (
-                <article className="marketAgentCard" key={agent.marketId}>
-                  <div className="marketAgentTop">
-                    <div>
-                      <span>{agent.category}</span>
-                      <strong>{agent.name}</strong>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={installed}
-                      onClick={() => void props.onInstallMarketAgent(agent.marketId)}
-                    >
-                      {installed ? "Added" : "Add"}
-                    </button>
+          <div className="marketLayout">
+            <div className="marketAgentGrid">
+              {props.marketAgents.map((agent) => {
+                const installed = installedMarketIds.has(agent.marketId);
+                return (
+                  <button
+                    className={
+                      agent.marketId === selectedMarketAgent?.marketId ? "selected" : ""
+                    }
+                    key={agent.marketId}
+                    type="button"
+                    onClick={() => props.onSelectMarketAgent(agent.marketId)}
+                  >
+                    <span>{agent.category}</span>
+                    <strong>{agent.name}</strong>
+                    <p>{agent.description}</p>
+                    <small>{installed ? "Added to My Agents" : "Available"}</small>
+                  </button>
+                );
+              })}
+            </div>
+
+            {selectedMarketAgent ? (
+              <aside className="marketAgentDetail">
+                <div className="marketDetailTop">
+                  <div>
+                    <span>{selectedMarketAgent.category}</span>
+                    <strong>{selectedMarketAgent.name}</strong>
                   </div>
-                  <p>{agent.description}</p>
-                  <div className="marketSkillRow">
-                    {agent.skills.slice(0, 4).map((skill) => (
-                      <small key={skill}>{skill}</small>
+                  <button
+                    type="button"
+                    disabled={installedMarketIds.has(selectedMarketAgent.marketId)}
+                    onClick={() =>
+                      void props.onInstallMarketAgent(selectedMarketAgent.marketId)
+                    }
+                  >
+                    {installedMarketIds.has(selectedMarketAgent.marketId) ? "Added" : "Add"}
+                  </button>
+                </div>
+                <p>{selectedMarketAgent.description}</p>
+                <div className="marketSkillRow">
+                  {selectedMarketAgent.skills.map((skill) => (
+                    <small key={skill}>{skill}</small>
+                  ))}
+                </div>
+                <div className="marketDetailBlock">
+                  <span>Scope</span>
+                  <p>{selectedMarketAgent.taskScope}</p>
+                </div>
+                <div className="marketDetailBlock">
+                  <span>Success</span>
+                  <ul>
+                    {selectedMarketAgent.successCriteria.slice(0, 5).map((item) => (
+                      <li key={item}>{item}</li>
                     ))}
-                  </div>
-                </article>
-              );
-            })}
+                  </ul>
+                </div>
+                <div className="marketDetailSource">
+                  <span>{selectedMarketAgent.license}</span>
+                  <a href={selectedMarketAgent.originUrl} target="_blank" rel="noreferrer">
+                    Source
+                  </a>
+                </div>
+              </aside>
+            ) : null}
           </div>
         )}
       </section>
