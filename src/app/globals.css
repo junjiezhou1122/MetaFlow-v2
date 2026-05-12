@@ -501,8 +501,7 @@ button {
   cursor: default;
 }
 
-.marketAgentDetail p,
-.marketAgentDetail li {
+.marketAgentDetail p {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.45;
@@ -523,7 +522,7 @@ button {
 .marketDetailBlock {
   border-top: 1px solid var(--line);
   display: grid;
-  gap: 8px;
+  gap: 10px;
   padding-top: 12px;
 }
 
@@ -531,9 +530,26 @@ button {
   margin: 0;
 }
 
-.marketDetailBlock ul {
-  margin: 0;
-  padding-left: 18px;
+.marketSkillDetailList {
+  display: grid;
+  gap: 8px;
+}
+
+.marketSkillDetailList article {
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 5px;
+  padding: 9px;
+}
+
+.marketSkillDetailList strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.marketSkillDetailList p {
+  font-size: 13px;
+  line-height: 1.35;
 }
 
 .marketDetailSource {

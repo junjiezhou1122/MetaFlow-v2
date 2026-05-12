@@ -939,22 +939,16 @@ function AgentsView(props: {
                   </button>
                 </div>
                 <p>{selectedMarketAgent.description}</p>
-                <div className="marketSkillRow">
-                  {selectedMarketAgent.skills.map((skill) => (
-                    <small key={skill}>{skill}</small>
-                  ))}
-                </div>
                 <div className="marketDetailBlock">
-                  <span>Scope</span>
-                  <p>{selectedMarketAgent.taskScope}</p>
-                </div>
-                <div className="marketDetailBlock">
-                  <span>Success</span>
-                  <ul>
-                    {selectedMarketAgent.successCriteria.slice(0, 5).map((item) => (
-                      <li key={item}>{item}</li>
+                  <span>Skills</span>
+                  <div className="marketSkillDetailList">
+                    {selectedMarketAgent.skills.map((skill) => (
+                      <article key={skill}>
+                        <strong>{skill}</strong>
+                        <p>{describeAgentSkill(skill)}</p>
+                      </article>
                     ))}
-                  </ul>
+                  </div>
                 </div>
                 <div className="marketDetailSource">
                   <span>{selectedMarketAgent.license}</span>
@@ -1276,6 +1270,36 @@ function upsertAgent(agents: AgentProfile[], agent: AgentProfile): AgentProfile[
   }
 
   return agents.map((item) => (item.id === agent.id ? agent : item));
+}
+
+function describeAgentSkill(skill: string): string {
+  const normalized = skill.toLowerCase();
+  const descriptions: Record<string, string> = {
+    frontend: "Builds user-facing web interfaces, components, responsive layouts, and browser interactions.",
+    backend: "Designs APIs, data models, service boundaries, and server-side implementation plans.",
+    architecture: "Defines system structure, trade-offs, boundaries, and long-term technical direction.",
+    security: "Finds trust-boundary, auth, data exposure, and vulnerability risks before release.",
+    review: "Checks output for correctness, maintainability, missing requirements, and regressions.",
+    testing: "Creates validation plans, edge cases, and evidence that the deliverable works.",
+    accessibility: "Checks keyboard, semantic, contrast, and assistive-technology usability.",
+    design: "Shapes visual hierarchy, layout, interaction states, and design system consistency.",
+    research: "Finds user, market, or technical evidence to guide decisions.",
+    product: "Clarifies user value, scope, acceptance criteria, and product trade-offs.",
+    planning: "Breaks ambiguous work into ordered tasks, owners, dependencies, and milestones.",
+    documentation: "Turns implementation details into clear docs, guides, references, and release notes.",
+    devops: "Automates build, deployment, infrastructure, monitoring, and operational workflows.",
+    automation: "Removes manual repeated work with scripts, workflows, and repeatable processes.",
+    data: "Builds data flows, schemas, transformations, quality checks, and analysis-ready outputs.",
+    ai: "Designs AI features, prompts, evaluation loops, retrieval, and model integration.",
+    marketing: "Creates messaging, content plans, campaign copy, and audience-specific positioning.",
+    sales: "Shapes buyer-facing proposals, win themes, objections, and deal narratives.",
+    finance: "Builds forecasts, models, scenarios, and number-backed decision support.",
+    proposal: "Turns requirements and buyer context into a persuasive response structure.",
+    performance: "Improves speed, latency, rendering cost, scalability, and user-perceived responsiveness.",
+    api: "Validates endpoint contracts, integrations, auth behavior, schemas, and failure cases.",
+  };
+
+  return descriptions[normalized] ?? `Applies ${skill} expertise to the assigned mission work.`;
 }
 
 function upsertApp(apps: SavedApp[], app: SavedApp): SavedApp[] {
