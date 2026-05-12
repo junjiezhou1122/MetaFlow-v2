@@ -756,6 +756,213 @@ describe("mission runtime", () => {
     expect(preview.events.some((event) => event.message.includes("feature-level"))).toBe(true);
   });
 
+  it("asks builder for an MVP-first artifact instead of a complete all-at-once app", async () => {
+    const calls: string[] = [];
+    let builderPrompt = "";
+    const model = {
+      invoke: async (messages: Array<{ role: string; content: string }>) => {
+        const prompt = messages.map((message) => message.content).join("\n");
+        if (prompt.includes("Planner agent")) {
+          calls.push("planner");
+          return {
+            content:
+              "```json filename=\"planner-output.json\"\n{\"finalBrief\":\"Build Anki MVP.\",\"artifactKind\":\"web_app\",\"requiredSkills\":[\"software implementation\"],\"tasks\":[{\"id\":\"build-anki\",\"title\":\"Build Anki study app\",\"description\":\"Create flashcards, review, flip, grade, and save state.\",\"assignedTo\":\"Builder\",\"assignedAgentId\":\"builder\",\"status\":\"queued\"}]}\n```",
+          };
+        }
+
+        if (prompt.includes("You are Builder.")) {
+          calls.push("builder");
+          builderPrompt = prompt;
+          return {
+            content:
+              "```html filename=\"index.html\"\n<!doctype html><html><body><main><input id=\"front\"><input id=\"back\"><button>Add</button><button>Flip</button><script>localStorage.setItem('anki-cards','[]')</script></main></body></html>\n```",
+          };
+        }
+
+        if (prompt.includes("Reviewer agent")) {
+          calls.push("reviewer");
+          return {
+            content:
+              "```json filename=\"review.json\"\n{\"passed\":true,\"issues\":[],\"requiredFixes\":[],\"summary\":\"Anki MVP accepted.\"}\n```",
+          };
+        }
+
+        throw new Error("Unexpected prompt");
+      },
+    };
+
+    const preview = await runMultiAgentMission(
+      "我想要一个类似anki的应用",
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+    );
+
+    expect(calls).toEqual(["planner", "builder", "reviewer"]);
+    expect(builderPrompt).toContain("Build the smallest usable MVP first");
+    expect(builderPrompt).toContain("Prefer a compact MVP artifact");
+    expect(preview.error).toBeUndefined();
+    expect(preview.artifacts?.[0]?.filename).toBe("index.html");
+    expect(preview.artifacts?.[0]?.content).toContain("anki-cards");
+  });
+
+  it("does not select planner tasks as artifact build tasks", async () => {
+    const runningAgents: string[] = [];
+    const model = {
+      invoke: async (messages: Array<{ role: string; content: string }>) => {
+        const prompt = messages.map((message) => message.content).join("\n");
+        if (prompt.includes("Planner agent")) {
+          return {
+            content:
+              "```json filename=\"planner-output.json\"\n{\"finalBrief\":\"Fallback-style plan.\",\"artifactKind\":\"web_app\",\"requiredSkills\":[\"software implementation\"],\"tasks\":[{\"id\":\"task-1\",\"title\":\"Shape the product\",\"description\":\"Clarify the Anki MVP.\",\"assignedTo\":\"Product Planner\",\"assignedAgentId\":\"planner\",\"status\":\"queued\"},{\"id\":\"task-2\",\"title\":\"Build artifact\",\"description\":\"Create the first usable Anki MVP.\",\"assignedTo\":\"Builder\",\"assignedAgentId\":\"builder\",\"status\":\"queued\"},{\"id\":\"task-3\",\"title\":\"Review artifact\",\"description\":\"Review the MVP.\",\"assignedTo\":\"Reviewer\",\"assignedAgentId\":\"reviewer\",\"status\":\"queued\"}]}\n```",
+          };
+        }
+
+        if (prompt.includes("You are Builder.")) {
+          return {
+            content:
+              "```html filename=\"index.html\"\n<!doctype html><html><body><button>Flip</button><script>localStorage.setItem('anki','[]')</script></body></html>\n```",
+          };
+        }
+
+        return {
+          content:
+            "```json filename=\"review.json\"\n{\"passed\":true,\"issues\":[],\"requiredFixes\":[],\"summary\":\"OK\"}\n```",
+        };
+      },
+    };
+
+    await runMultiAgentMission(
+      "我想要一个类似anki的应用",
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+      async (update) => {
+        if (update.stage === "building") {
+          runningAgents.push(
+            ...update.preview.tasks
+              .filter((task) => task.status === "running")
+              .map((task) => task.assignedTo),
+          );
+        }
+      },
+    );
+
+    expect(runningAgents).toContain("Builder");
+    expect(runningAgents).not.toContain("Product Planner");
+  });
+
+  it("announces builder as the artifact owner when planner and builder tasks both exist", async () => {
+    const buildEvents: string[] = [];
+    const model = {
+      invoke: async (messages: Array<{ role: string; content: string }>) => {
+        const prompt = messages.map((message) => message.content).join("\n");
+        if (prompt.includes("Planner agent")) {
+          return {
+            content:
+              "```json filename=\"planner-output.json\"\n{\"finalBrief\":\"Fallback-style plan.\",\"artifactKind\":\"web_app\",\"requiredSkills\":[\"software implementation\"],\"tasks\":[{\"id\":\"task-1\",\"title\":\"Shape the product\",\"description\":\"Clarify the app MVP.\",\"assignedTo\":\"Product Planner\",\"assignedAgentId\":\"planner\",\"status\":\"queued\"},{\"id\":\"task-2\",\"title\":\"Build artifact\",\"description\":\"Create the first usable MVP.\",\"assignedTo\":\"Builder\",\"assignedAgentId\":\"builder\",\"status\":\"queued\"},{\"id\":\"task-3\",\"title\":\"Review artifact\",\"description\":\"Review the MVP.\",\"assignedTo\":\"Reviewer\",\"assignedAgentId\":\"reviewer\",\"status\":\"queued\"}]}\n```",
+          };
+        }
+
+        if (prompt.includes("You are Builder.")) {
+          return {
+            content:
+              "```html filename=\"index.html\"\n<!doctype html><html><body><button>Flip</button><script>localStorage.setItem('anki','[]')</script></body></html>\n```",
+          };
+        }
+
+        return {
+          content:
+            "```json filename=\"review.json\"\n{\"passed\":true,\"issues\":[],\"requiredFixes\":[],\"summary\":\"OK\"}\n```",
+        };
+      },
+    };
+
+    await runMultiAgentMission(
+      "我想要一个类似anki的应用",
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+      async (update) => {
+        const lastEvent = update.preview.events.at(-1)?.message ?? "";
+        if (lastEvent.includes("started") && lastEvent.includes("feature task")) {
+          buildEvents.push(lastEvent);
+        }
+      },
+    );
+
+    expect(buildEvents).toContain("Builder started 1 feature task(s).");
+    expect(buildEvents).not.toContain("Product Planner started 1 feature task(s).");
+  });
+
+  it("routes follow-up prompts through planner, builder, and reviewer even when an artifact already exists", async () => {
+    const calls: string[] = [];
+    const model = {
+      invoke: async (messages: Array<{ role: string; content: string }>) => {
+        const prompt = messages.map((message) => message.content).join("\n");
+        if (prompt.includes("Planner agent")) {
+          calls.push("planner");
+          return {
+            content:
+              "```json filename=\"planner-output.json\"\n{\"finalBrief\":\"Plan the requested improvement.\",\"artifactKind\":\"web_app\",\"requiredSkills\":[\"software implementation\"],\"tasks\":[{\"id\":\"improve-artifact\",\"title\":\"Improve artifact\",\"description\":\"Apply the user's follow-up request to the existing artifact.\",\"assignedTo\":\"Builder\",\"assignedAgentId\":\"builder\",\"status\":\"queued\"}]}\n```",
+          };
+        }
+
+        if (prompt.includes("Update the existing product")) {
+          calls.push("builder");
+          return {
+            content:
+              "```html filename=\"index.html\"\n<!doctype html><html><body><input id='front'><input id='back'><button>Flip</button><button>Again</button><button>Good</button><button>Easy</button><script>localStorage.setItem('anki-cards','[]')</script></body></html>\n```",
+          };
+        }
+
+        if (prompt.includes("Reviewer agent")) {
+          calls.push("reviewer");
+          return {
+            content:
+              "```json filename=\"review.json\"\n{\"passed\":true,\"issues\":[],\"requiredFixes\":[],\"summary\":\"Follow-up artifact accepted.\"}\n```",
+          };
+        }
+
+        throw new Error("Unexpected prompt");
+      },
+    };
+    const previousPreview = {
+      mission: "我想要一个类似anki的应用",
+      selectedCapabilities: [],
+      ephemeralAgents: [],
+      tasks: [],
+      events: [],
+      artifacts: [
+        {
+          id: "artifact-1",
+          filename: "index.html",
+          type: "html" as const,
+          title: "index.html",
+          description: "Anki MVP",
+          content:
+            "<!doctype html><html><body><input id='front'><input id='back'><button>Flip</button><button>Again</button><button>Good</button><script>localStorage.setItem('anki-cards','[]')</script></body></html>",
+        },
+      ],
+      finalBrief: "Anki MVP is ready.",
+    };
+
+    const preview = await runMissionIteration(
+      "我想要一个类似anki的应用",
+      "继续生成最小 Anki MVP。只要一个单文件 HTML，可添加正反面卡片、翻面、Again/Good、localStorage 保存。",
+      previousPreview,
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+    );
+
+    expect(calls).toEqual(["planner", "builder", "reviewer"]);
+    expect(preview.error).toBeUndefined();
+    expect(preview.artifacts?.[0]?.filename).toBe("index.html");
+    expect(preview.artifacts?.[0]?.content).toContain("Easy");
+    expect(preview.finalBrief).toContain("Follow-up artifact accepted");
+  });
+
   it("can still extract legacy mission-run reports from model text", () => {
     const report = extractRunReportFromText(
       [

@@ -102,6 +102,55 @@ describe("mission store", () => {
     ]);
   });
 
+  it("ignores stale async updates from older mission runs", async () => {
+    const store = new FileMissionStore(await createTempDir());
+    const mission = await store.create("Build an Anki app");
+
+    await store.update(mission.id, {
+      status: "running",
+      stage: "building",
+      activeRunId: "run-new",
+      preview: {
+        mission: mission.input,
+        selectedCapabilities: [],
+        ephemeralAgents: [],
+        tasks: [],
+        events: [],
+        artifacts: [
+          {
+            id: "artifact-1",
+            type: "html",
+            filename: "index.html",
+            title: "index.html",
+            content: "<!doctype html><html></html>",
+            description: "Generated app",
+          },
+        ],
+        finalBrief: "New run has the latest artifact.",
+      },
+    });
+
+    const stale = await store.updateIfRunActive(mission.id, "run-old", {
+      status: "running",
+      stage: "building",
+      preview: {
+        mission: mission.input,
+        selectedCapabilities: [],
+        ephemeralAgents: [],
+        tasks: [],
+        events: [],
+        artifacts: [],
+        finalBrief: "Old run is still building.",
+      },
+    });
+    const stored = await store.get(mission.id);
+
+    expect(stale).toBeNull();
+    expect(stored?.activeRunId).toBe("run-new");
+    expect(stored?.preview?.artifacts).toHaveLength(1);
+    expect(stored?.preview?.finalBrief).toBe("New run has the latest artifact.");
+  });
+
   it("lists newest meaningful missions first", async () => {
     const store = new FileMissionStore(await createTempDir());
 

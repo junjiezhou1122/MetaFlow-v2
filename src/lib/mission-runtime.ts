@@ -1691,7 +1691,7 @@ async function runBuilderAgent(
   model: MissionChatModel,
   plan: Pick<MissionRunReport, "artifactKind" | "requiredSkills" | "selectedCapabilityIds"> = {},
 ): Promise<string> {
-  const result = await invokeModelWithRetry(model, [
+  const messages: Array<{ role: "system" | "user"; content: string }> = [
     {
       role: "system",
       content: [
@@ -1703,11 +1703,15 @@ async function runBuilderAgent(
         "Generate real artifacts only. Never use placeholders.",
         "Return named fenced code blocks for every file you create.",
         "Follow the planner artifactKind and requiredSkills. Do not re-classify the mission from keywords.",
+        "Build the smallest usable MVP first, not the complete dream app.",
+        "The MVP must be immediately usable and easy for the user to improve with follow-up prompts.",
+        "Include only the core workflow needed to prove the mission works.",
         "If the plan uses a web app skill, return runnable HTML or React project files.",
         "If the plan uses a presentation skill, return a deck artifact such as ```markdown filename=\"deck.md\"` or another named deck file requested by the plan.",
         "If the plan uses a document, spreadsheet, image, research, or automation skill, return the matching named artifact file(s).",
         "Implement the user's requested artifact directly.",
         "Do not build a requirements clarification page, task planner, proposal, or explanation page.",
+        "Prefer a compact MVP artifact over a large unfinished response.",
         "Keep the output concise but complete. No explanation.",
       ].join("\n"),
     },
@@ -1715,15 +1719,18 @@ async function runBuilderAgent(
       role: "user",
       content: [
         `Mission: ${mission}`,
-        "Create the requested artifact directly using the planner-selected skill direction.",
+        "Create the first usable MVP artifact directly using the planner-selected skill direction.",
         "Do not ask follow-up questions. Do not create a requirements clarification page.",
         `Required task: ${tasks.find((task) => task.assignedTo === "Builder")?.description ?? "Build a complete runnable artifact."}`,
+        "Keep scope small: one artifact, core workflow only, complete enough to use immediately.",
         "Use the planner artifactKind and requiredSkills to choose the artifact format.",
       ].join("\n"),
     },
-  ]);
+  ];
 
+  const result = await invokeModelWithRetry(model, messages);
   const content = extractMessageContent(result.content);
+
   if (extractArtifactsFromText(content).length > 0) {
     return content;
   }
@@ -2045,25 +2052,6 @@ function reviewArtifactsLocally(mission: string, artifacts: MissionArtifact[]): 
     requiredFixes.push("Add complete JavaScript or React behavior for the app.");
   }
 
-  if (missionText.includes("todolist") || missionText.includes("todo")) {
-    for (const token of ["input", "button", "localstorage"]) {
-      if (!combined.includes(token)) {
-        issues.push(`Todo artifact is missing ${token}.`);
-      }
-    }
-    if (issues.length > 0) {
-      requiredFixes.push("Implement todo input, add action, list rendering, and localStorage persistence.");
-    }
-  }
-
-  if (missionText.includes("番茄") || missionText.includes("pomodoro")) {
-    const hasTimerSignal = /1500|25|timer|倒计时|setinterval/.test(combined);
-    if (!hasTimerSignal) {
-      issues.push("Pomodoro artifact does not include timer behavior.");
-      requiredFixes.push("Implement a working 25-minute timer with start, pause, and reset controls.");
-    }
-  }
-
   const uniqueFixes = [...new Set(requiredFixes)];
   return {
     passed: issues.length === 0,
@@ -2115,7 +2103,7 @@ function isCodeArtifact(artifact: MissionArtifact): boolean {
 }
 
 function isSoftwareMission(mission: string): boolean {
-  return /app|web|网页|应用|小游戏|游戏|工具|todolist|todo|番茄/.test(mission);
+  return /app|web|网页|应用|小游戏|游戏|工具|software|site|website/.test(mission);
 }
 
 function formatTasksForPrompt(tasks: MissionTask[]): string {
@@ -2770,6 +2758,8 @@ function appendTaskAssignmentEvents(
 
 function selectArtifactTask(tasks: MissionTask[]): MissionTask {
   return (
+    tasks.find((task) => task.assignedAgentId === "builder") ??
+    tasks.find((task) => isImplementationTask(task)) ??
     tasks.find((task) => isArtifactTask(task)) ??
     tasks.find((task) => !isReviewTask(task)) ??
     tasks[0] ??

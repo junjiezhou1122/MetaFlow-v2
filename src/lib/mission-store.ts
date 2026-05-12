@@ -29,10 +29,14 @@ export type StoredMission = {
   createdAt: string;
   updatedAt: string;
   runningSince?: string;
+  activeRunId?: string;
 };
 
 export type MissionUpdate = Partial<
-  Pick<StoredMission, "preview" | "status" | "stage" | "error" | "runningSince">
+  Pick<
+    StoredMission,
+    "preview" | "status" | "stage" | "error" | "runningSince" | "activeRunId"
+  >
 >;
 
 export function appendMissionEvent(
@@ -98,6 +102,40 @@ export class FileMissionStore {
       let updatedMission: StoredMission | null = null;
       const nextMissions = missions.map((mission) => {
         if (mission.id !== id) {
+          return mission;
+        }
+
+        updatedMission = {
+          ...mission,
+          ...update,
+          updatedAt: new Date().toISOString(),
+        };
+        return updatedMission;
+      });
+
+      if (!updatedMission) {
+        return null;
+      }
+
+      await this.writeMissions(nextMissions);
+      return updatedMission;
+    });
+  }
+
+  async updateIfRunActive(
+    id: string,
+    runId: string,
+    update: MissionUpdate,
+  ): Promise<StoredMission | null> {
+    return this.withWriteLock(async () => {
+      const missions = await this.readMissions();
+      let updatedMission: StoredMission | null = null;
+      const nextMissions = missions.map((mission) => {
+        if (mission.id !== id) {
+          return mission;
+        }
+
+        if (mission.activeRunId !== runId) {
           return mission;
         }
 
@@ -208,6 +246,7 @@ function isStoredMission(value: unknown): value is StoredMission {
     typeof mission.createdAt === "string" &&
     typeof mission.updatedAt === "string" &&
     (mission.runningSince === undefined || typeof mission.runningSince === "string") &&
+    (mission.activeRunId === undefined || typeof mission.activeRunId === "string") &&
     (mission.error === undefined || typeof mission.error === "string")
   );
 }

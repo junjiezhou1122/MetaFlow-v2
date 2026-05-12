@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { FileAppLibrary } from "./app-library";
 import { FileAgentRegistry } from "./agent-registry";
 import {
@@ -19,7 +21,7 @@ import {
   type ProviderSettings,
 } from "./provider-settings";
 
-const runningMissionIds = new Set<string>();
+const runningMissionRuns = new Map<string, string>();
 const stalledAfterMs = 10 * 60 * 1000;
 const watchdogIntervalMs = 30 * 1000;
 
@@ -32,13 +34,14 @@ export async function startMissionExecution(
   mission: StoredMission,
   settingsInput: unknown,
 ): Promise<void> {
-  if (runningMissionIds.has(mission.id)) {
+  if (runningMissionRuns.has(mission.id)) {
     return;
   }
 
-  runningMissionIds.add(mission.id);
+  const runId = createRunId();
+  runningMissionRuns.set(mission.id, runId);
   void executeMission(mission, settingsInput).finally(() => {
-    runningMissionIds.delete(mission.id);
+    clearRunningMissionRun(mission.id, runId);
   });
 }
 
@@ -47,17 +50,19 @@ export async function startMissionIteration(
   prompt: string,
   settingsInput: unknown,
 ): Promise<void> {
-  if (runningMissionIds.has(mission.id)) {
+  if (runningMissionRuns.has(mission.id)) {
     return;
   }
 
-  runningMissionIds.add(mission.id);
+  const runId = createRunId();
+  runningMissionRuns.set(mission.id, runId);
   void executeMissionIteration(mission, prompt, settingsInput).finally(() => {
-    runningMissionIds.delete(mission.id);
+    clearRunningMissionRun(mission.id, runId);
   });
 }
 
 async function executeMission(mission: StoredMission, settingsInput: unknown) {
+  const runId = runningMissionRuns.get(mission.id) ?? createRunId();
   const stopWatchdog = startStallWatchdog(mission.id);
   const storedSettings =
     settingsInput && typeof settingsInput === "object"
@@ -81,6 +86,7 @@ async function executeMission(mission: StoredMission, settingsInput: unknown) {
       stage: "planning",
       error: undefined,
       runningSince: new Date().toISOString(),
+      activeRunId: runId,
     });
 
     const preview = await runMultiAgentMission(
@@ -89,7 +95,7 @@ async function executeMission(mission: StoredMission, settingsInput: unknown) {
       model,
       agents,
       async (update) => {
-        await missionStore.update(mission.id, {
+        await missionStore.updateIfRunActive(mission.id, runId, {
           status: "running",
           stage: update.stage,
           preview: update.preview,
@@ -97,24 +103,26 @@ async function executeMission(mission: StoredMission, settingsInput: unknown) {
       },
     );
 
-    await missionStore.update(mission.id, {
+    await missionStore.updateIfRunActive(mission.id, runId, {
       status: preview.error ? "failed" : "ready",
       stage: preview.error ? "failed" : "done",
       preview,
       error: preview.error,
       runningSince: undefined,
+      activeRunId: undefined,
     });
   } catch (error) {
     const latestMission = (await missionStore.get(mission.id)) ?? mission;
     const basePreview = latestMission.preview ?? buildMissionPreview(latestMission.input);
     const message =
       error instanceof Error ? error.message : "Mission execution failed.";
-    await missionStore.update(mission.id, {
+    await missionStore.updateIfRunActive(mission.id, runId, {
       status: "failed",
       stage: "failed",
       preview: appendMissionEvent(basePreview, "mission.failed", message),
       error: message,
       runningSince: undefined,
+      activeRunId: undefined,
     });
   } finally {
     stopWatchdog();
@@ -126,6 +134,7 @@ async function executeMissionIteration(
   prompt: string,
   settingsInput: unknown,
 ) {
+  const runId = runningMissionRuns.get(mission.id) ?? createRunId();
   const stopWatchdog = startStallWatchdog(mission.id);
   const storedSettings =
     settingsInput && typeof settingsInput === "object"
@@ -149,6 +158,7 @@ async function executeMissionIteration(
       stage: "planning",
       error: undefined,
       runningSince: new Date().toISOString(),
+      activeRunId: runId,
     });
 
     const latestMission = (await missionStore.get(mission.id)) ?? mission;
@@ -160,7 +170,7 @@ async function executeMissionIteration(
       model,
       agents,
       async (update) => {
-        await missionStore.update(mission.id, {
+        await missionStore.updateIfRunActive(mission.id, runId, {
           status: "running",
           stage: update.stage,
           preview: update.preview,
@@ -168,26 +178,38 @@ async function executeMissionIteration(
       },
     );
 
-    await missionStore.update(mission.id, {
+    await missionStore.updateIfRunActive(mission.id, runId, {
       status: preview.error ? "failed" : "ready",
       stage: preview.error ? "failed" : "done",
       preview,
       error: preview.error,
       runningSince: undefined,
+      activeRunId: undefined,
     });
   } catch (error) {
     const latestMission = (await missionStore.get(mission.id)) ?? mission;
     const basePreview = latestMission.preview ?? buildMissionPreview(latestMission.input);
     const message = error instanceof Error ? error.message : "Mission update failed.";
-    await missionStore.update(mission.id, {
+    await missionStore.updateIfRunActive(mission.id, runId, {
       status: "failed",
       stage: "failed",
       preview: appendMissionEvent(basePreview, "mission.failed", message),
       error: message,
       runningSince: undefined,
+      activeRunId: undefined,
     });
   } finally {
     stopWatchdog();
+  }
+}
+
+function createRunId(): string {
+  return typeof randomUUID === "function" ? randomUUID() : `run-${Date.now()}`;
+}
+
+function clearRunningMissionRun(missionId: string, runId: string) {
+  if (runningMissionRuns.get(missionId) === runId) {
+    runningMissionRuns.delete(missionId);
   }
 }
 
@@ -230,6 +252,6 @@ function startStallWatchdog(missionId: string): () => void {
         "No progress has been observed for a while. The model call may still be pending; you can retry or continue the mission.",
       runningSince: undefined,
     });
-    runningMissionIds.delete(id);
+    runningMissionRuns.delete(id);
   }
 }
