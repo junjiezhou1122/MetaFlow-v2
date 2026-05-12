@@ -810,6 +810,23 @@ input:focus {
   width: 100%;
 }
 
+.fullscreenArtifact {
+  background: var(--surface);
+  inset: 0;
+  padding: 14px;
+  position: fixed;
+  z-index: 20;
+}
+
+.fullscreenArtifact .artifactMeta {
+  min-height: 42px;
+}
+
+.fullscreenArtifact .artifactPreview {
+  height: calc(100vh - 82px);
+  min-height: 0;
+}
+
 .artifactItem strong {
   font-weight: 500;
   margin-top: 0;

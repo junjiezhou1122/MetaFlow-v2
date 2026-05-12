@@ -900,10 +900,11 @@ function ArtifactItem(props: {
   const [activeView, setActiveView] = useState<"preview" | "code">(
     previewHtml ? "preview" : "code",
   );
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const sizeLabel = `${(props.artifact.content.length / 1024).toFixed(1)} KB`;
 
   return (
-    <article className="artifactItem">
+    <article className={`artifactItem ${isFullscreen ? "fullscreenArtifact" : ""}`}>
       <div className="artifactMeta">
         <div>
           <strong>{props.artifact.filename}</strong>
@@ -919,6 +920,11 @@ function ArtifactItem(props: {
               onClick={() => setActiveView("preview")}
             >
               Preview
+            </button>
+          ) : null}
+          {previewHtml ? (
+            <button type="button" onClick={() => setIsFullscreen((value) => !value)}>
+              {isFullscreen ? "Exit" : "Fullscreen"}
             </button>
           ) : null}
           <button
