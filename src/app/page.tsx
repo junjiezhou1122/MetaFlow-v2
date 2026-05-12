@@ -894,19 +894,25 @@ function AgentsView(props: {
               const installed = installedMarketIds.has(agent.marketId);
               return (
                 <article className="marketAgentCard" key={agent.marketId}>
-                  <div>
-                    <span>{agent.category}</span>
-                    <strong>{agent.name}</strong>
-                    <p>{agent.description}</p>
+                  <div className="marketAgentTop">
+                    <div>
+                      <span>{agent.category}</span>
+                      <strong>{agent.name}</strong>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={installed}
+                      onClick={() => void props.onInstallMarketAgent(agent.marketId)}
+                    >
+                      {installed ? "Added" : "Add"}
+                    </button>
                   </div>
-                  <small>{agent.skills.slice(0, 5).join(" / ")}</small>
-                  <button
-                    type="button"
-                    disabled={installed}
-                    onClick={() => void props.onInstallMarketAgent(agent.marketId)}
-                  >
-                    {installed ? "Added" : "Add"}
-                  </button>
+                  <p>{agent.description}</p>
+                  <div className="marketSkillRow">
+                    {agent.skills.slice(0, 4).map((skill) => (
+                      <small key={skill}>{skill}</small>
+                    ))}
+                  </div>
                 </article>
               );
             })}

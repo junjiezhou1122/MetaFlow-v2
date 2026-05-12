@@ -324,8 +324,7 @@ button {
   gap: 6px !important;
 }
 
-.agentTabs button,
-.marketAgentCard button {
+.agentTabs button {
   background: transparent;
   border: 1px solid var(--accent);
   color: var(--accent);
@@ -333,18 +332,10 @@ button {
   padding: 0 12px;
 }
 
-.agentTabs button.selected,
-.marketAgentCard button {
+.agentTabs button.selected {
   background: var(--ink);
   border-color: var(--ink);
   color: var(--surface);
-}
-
-.marketAgentCard button:disabled {
-  background: transparent;
-  border-color: var(--line);
-  color: var(--muted);
-  cursor: default;
 }
 
 .agentRegistryHeader strong {
@@ -411,22 +402,31 @@ button {
 
 .marketAgentGrid {
   display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
 }
 
 .marketAgentCard {
-  background: transparent;
+  background: rgb(255 254 250 / 0.72);
   border: 1px solid var(--line);
   display: grid;
-  gap: 14px;
-  min-height: 230px;
-  padding: 14px;
+  gap: 12px;
+  grid-template-rows: auto 1fr auto;
+  min-height: 178px;
+  padding: 12px;
 }
 
-.marketAgentCard div {
+.marketAgentTop {
+  align-items: start;
+  display: flex !important;
+  gap: 12px !important;
+  justify-content: space-between;
+}
+
+.marketAgentTop div {
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
 }
 
 .marketAgentCard span,
@@ -437,14 +437,49 @@ button {
 }
 
 .marketAgentCard strong {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 500;
+  line-height: 1.2;
 }
 
 .marketAgentCard p {
   color: var(--muted);
-  line-height: 1.45;
+  display: -webkit-box;
+  font-size: 14px;
+  line-height: 1.42;
   margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.marketAgentCard button {
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  color: var(--surface);
+  flex: 0 0 auto;
+  min-height: 32px;
+  min-width: 64px;
+  padding: 0 10px;
+}
+
+.marketAgentCard button:disabled {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--muted);
+  cursor: default;
+}
+
+.marketSkillRow {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 6px !important;
+}
+
+.marketSkillRow small {
+  border: 1px solid var(--line);
+  line-height: 1;
+  padding: 5px 6px;
 }
 
 .narrowStack {
