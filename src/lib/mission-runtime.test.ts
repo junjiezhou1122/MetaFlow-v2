@@ -71,6 +71,7 @@ describe("mission runtime", () => {
         "search_capabilities",
         "create_ephemeral_agent",
         "assign_task",
+        "submit_artifact",
       ]),
     );
   });
@@ -81,8 +82,9 @@ describe("mission runtime", () => {
     );
     const builderSkill = files["/skills/system-artifact-generation/SKILL.md"];
 
-    expect(builderSkill?.content.join("\n")).toContain("name: system-artifact-generation");
-    expect(builderSkill?.content.join("\n")).toContain("Artifact Generation");
+    expect(builderSkill?.content).toContain("name: system-artifact-generation");
+    expect(builderSkill?.content).toContain("Artifact Generation");
+    expect(builderSkill?.mimeType).toBe("text/markdown");
     expect(Object.keys(files)).toEqual(
       expect.arrayContaining([
         "/skills/system-mission-planning/SKILL.md",
@@ -605,6 +607,382 @@ describe("mission runtime", () => {
       ]),
     );
     expect(preview.artifacts?.[0]?.filename).toBe("index.html");
+  });
+
+  it("extracts artifacts written to native DeepAgents state files", async () => {
+    const model = {
+      withConfig: () => model,
+      invoke: async () => ({
+        messages: [
+          {
+            content:
+              "I wrote the requested app to /artifacts/index.html and verified the MVP.",
+          },
+        ],
+        files: {
+          "/artifacts/index.html": {
+            content:
+              "<!doctype html><html><body><main>Scoreboard<button>+1</button><script>localStorage.setItem('scores','[]')</script></main></body></html>",
+            created_at: "2026-05-12T00:00:00.000Z",
+            modified_at: "2026-05-12T00:00:00.000Z",
+          },
+          "/skills/system-artifact-generation/SKILL.md": {
+            content: ["# Internal skill"],
+            created_at: "2026-05-12T00:00:00.000Z",
+            modified_at: "2026-05-12T00:00:00.000Z",
+          },
+        },
+      }),
+    };
+
+    const preview = await runMultiAgentMission(
+      "做一个比赛积分应用",
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+    );
+
+    expect(preview.error).toBeUndefined();
+    expect(preview.finalBrief).toContain("Native DeepAgents");
+    expect(preview.artifacts?.[0]).toMatchObject({
+      filename: "index.html",
+      type: "html",
+    });
+    expect(preview.artifacts?.[0]?.content).toContain("localStorage");
+  });
+
+  it("keeps streamed native DeepAgents final state when later tool events finish", async () => {
+    const model = {
+      withConfig: () => model,
+      async *streamEvents() {
+        yield {
+          event: "on_tool_start",
+          name: "search_capabilities",
+          data: { input: { query: "scoreboard app" } },
+        };
+        yield {
+          event: "on_chain_end",
+          name: "meta-agent",
+          data: {
+            output: {
+              messages: [
+                {
+                  content:
+                    "I wrote the requested app to /artifacts/index.html.",
+                },
+              ],
+              files: {
+                "/artifacts/index.html": {
+                  content:
+                    "<!doctype html><html><body><main>Scoreboard<button>+1</button></main></body></html>",
+                  mimeType: "text/html",
+                  created_at: "2026-05-12T00:00:00.000Z",
+                  modified_at: "2026-05-12T00:00:00.000Z",
+                },
+              },
+            },
+          },
+        };
+        yield {
+          event: "on_tool_end",
+          name: "search_capabilities",
+          data: {
+            output:
+              "[{\"id\":\"app-builder\",\"name\":\"App Builder\",\"description\":\"Builds apps\"}]",
+          },
+        };
+      },
+      invoke: async () => {
+        throw new Error("Native stream path should not call invoke.");
+      },
+    };
+
+    const preview = await runMultiAgentMission(
+      "做一个比赛积分应用",
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+    );
+
+    expect(preview.error).toBeUndefined();
+    expect(preview.finalBrief).toContain("Native DeepAgents");
+    expect(preview.events.map((event) => event.message)).toEqual(
+      expect.arrayContaining([
+        "DeepAgents started tool search_capabilities.",
+        "DeepAgents completed tool search_capabilities.",
+      ]),
+    );
+    expect(preview.artifacts?.[0]?.filename).toBe("index.html");
+    expect(preview.artifacts?.[0]?.content).toContain("Scoreboard");
+  });
+
+  it("extracts artifacts from native DeepAgents task command file updates", async () => {
+    const model = {
+      withConfig: () => model,
+      async *streamEvents() {
+        yield {
+          event: "on_tool_end",
+          name: "task",
+          data: {
+            output: {
+              lg_name: "Command",
+              update: {
+                files: {
+                  "/artifacts/index.html": {
+                    content:
+                      "<!doctype html><html><body><main>Vote<button>投票</button><script>localStorage.setItem('votes','[]')</script></main></body></html>",
+                    mimeType: "text/html",
+                    created_at: "2026-05-12T00:00:00.000Z",
+                    modified_at: "2026-05-12T00:00:00.000Z",
+                  },
+                },
+              },
+            },
+          },
+        };
+        yield {
+          event: "on_chain_end",
+          name: "meta-agent",
+          data: {
+            output: {
+              messages: [{ content: "The voting app was written to /artifacts/index.html." }],
+            },
+          },
+        };
+      },
+      invoke: async () => {
+        throw new Error("Native stream path should not call invoke.");
+      },
+    };
+
+    const preview = await runMultiAgentMission(
+      "做一个投票应用",
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+    );
+
+    expect(preview.error).toBeUndefined();
+    expect(preview.artifacts?.[0]).toMatchObject({
+      filename: "index.html",
+      type: "html",
+    });
+    expect(preview.artifacts?.[0]?.content).toContain("votes");
+  });
+
+  it("extracts artifacts submitted through the native submit_artifact tool", async () => {
+    const model = {
+      withConfig: () => model,
+      async *streamEvents() {
+        yield {
+          event: "on_tool_end",
+          name: "submit_artifact",
+          data: {
+            output: JSON.stringify({
+              files: {
+                "/artifacts/index.html": {
+                  content:
+                    "<!doctype html><html><body><main>Poll<button>Vote</button><script>localStorage.setItem('poll','[]')</script></main></body></html>",
+                  mimeType: "text/html",
+                  created_at: "2026-05-12T00:00:00.000Z",
+                  modified_at: "2026-05-12T00:00:00.000Z",
+                },
+              },
+            }),
+          },
+        };
+        yield {
+          event: "on_chain_end",
+          name: "meta-agent",
+          data: {
+            output: {
+              messages: [{ content: "Submitted index.html." }],
+            },
+          },
+        };
+      },
+      invoke: async () => {
+        throw new Error("Native stream path should not call invoke.");
+      },
+    };
+
+    const preview = await runMultiAgentMission(
+      "做一个投票应用",
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+    );
+
+    expect(preview.error).toBeUndefined();
+    expect(preview.events.map((event) => event.message)).toContain(
+      "DeepAgents submitted artifact: index.html",
+    );
+    expect(preview.finalBrief).toContain("Native DeepAgents");
+    expect(preview.artifacts?.[0]?.filename).toBe("index.html");
+    expect(preview.artifacts?.[0]?.content).toContain("poll");
+  });
+
+  it("runs a native DeepAgents closure pass before falling back when no artifact is submitted", async () => {
+    const progressEvents: string[] = [];
+    let streamRuns = 0;
+    const model = {
+      withConfig: () => model,
+      async *streamEvents(input: unknown) {
+        streamRuns += 1;
+        const prompt = JSON.stringify(input);
+        if (streamRuns === 1) {
+          yield {
+            event: "on_tool_start",
+            name: "write_todos",
+            data: {
+              input: {
+                todos: [
+                  { content: "Plan the poll MVP", status: "in_progress" },
+                  { content: "Submit the runnable artifact", status: "pending" },
+                ],
+              },
+            },
+          };
+          yield {
+            event: "on_chain_end",
+            name: "meta-agent",
+            data: {
+              output: {
+                messages: [{ content: "I planned the mission but did not submit a file." }],
+              },
+            },
+          };
+          return;
+        }
+
+        expect(prompt).toContain("Complete the native DeepAgents artifact handoff");
+        yield {
+          event: "on_tool_end",
+          name: "submit_artifact",
+          data: {
+            output: JSON.stringify({
+              files: {
+                "/artifacts/index.html": {
+                  content:
+                    "<!doctype html><html><body><main>Poll<button>Vote</button><script>localStorage.setItem('closure-poll','[]')</script></main></body></html>",
+                  mimeType: "text/html",
+                  created_at: "2026-05-12T00:00:00.000Z",
+                  modified_at: "2026-05-12T00:00:00.000Z",
+                },
+              },
+            }),
+          },
+        };
+        yield {
+          event: "on_chain_end",
+          name: "meta-agent",
+          data: {
+            output: {
+              messages: [{ content: "Submitted the poll MVP artifact." }],
+            },
+          },
+        };
+      },
+      invoke: async () => {
+        throw new Error("Native stream path should not call invoke.");
+      },
+    };
+
+    const preview = await runMultiAgentMission(
+      "生成一个极简投票网页应用",
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+      async (update) => {
+        progressEvents.push(update.preview.events.at(-1)?.message ?? "");
+      },
+    );
+
+    expect(streamRuns).toBe(2);
+    expect(preview.error).toBeUndefined();
+    expect(preview.artifacts?.[0]?.filename).toBe("index.html");
+    expect(preview.artifacts?.[0]?.content).toContain("closure-poll");
+    expect(preview.finalBrief).toContain("Native DeepAgents");
+    expect(preview.events.map((event) => event.message)).toContain(
+      "Native DeepAgents is completing the artifact handoff before fallback.",
+    );
+    expect(preview.events.map((event) => event.message)).toContain(
+      "DeepAgents submitted artifact: index.html",
+    );
+    expect(preview.events.some((event) => event.message.includes("falling back"))).toBe(
+      false,
+    );
+    expect(progressEvents).toContain("DeepAgents submitted artifact: index.html");
+  });
+
+  it("recovers with native closure when the first DeepAgents stream terminates", async () => {
+    let streamRuns = 0;
+    const model = {
+      withConfig: () => model,
+      async *streamEvents() {
+        streamRuns += 1;
+        if (streamRuns === 1) {
+          yield {
+            event: "on_tool_start",
+            name: "write_todos",
+            data: {
+              input: {
+                todos: [{ content: "Plan the calculator MVP", status: "in_progress" }],
+              },
+            },
+          };
+          throw new Error("terminated");
+        }
+
+        yield {
+          event: "on_tool_end",
+          name: "submit_artifact",
+          data: {
+            output: JSON.stringify({
+              files: {
+                "/artifacts/index.html": {
+                  content:
+                    "<!doctype html><html><body><main>Calculator<button>=</button><script>localStorage.setItem('calc','ready')</script></main></body></html>",
+                  mimeType: "text/html",
+                  created_at: "2026-05-12T00:00:00.000Z",
+                  modified_at: "2026-05-12T00:00:00.000Z",
+                },
+              },
+            }),
+          },
+        };
+        yield {
+          event: "on_chain_end",
+          name: "meta-agent",
+          data: { output: { messages: [{ content: "Recovered and submitted index.html." }] } },
+        };
+      },
+      invoke: async () => {
+        throw new Error("Native stream path should not call invoke.");
+      },
+    };
+
+    const preview = await runMultiAgentMission(
+      "生成一个计算器网页应用",
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+    );
+
+    expect(streamRuns).toBe(2);
+    expect(preview.error).toBeUndefined();
+    expect(preview.events.map((event) => event.message)).toEqual(
+      expect.arrayContaining([
+        "DeepAgents updated todos: Plan the calculator MVP",
+        "DeepAgents stream stopped before artifact handoff: terminated",
+        "Native DeepAgents is completing the artifact handoff before fallback.",
+        "DeepAgents submitted artifact: index.html",
+      ]),
+    );
+    expect(preview.events.some((event) => event.message.includes("falling back"))).toBe(
+      false,
+    );
+    expect(preview.artifacts?.[0]?.content).toContain("calc");
   });
 
   it("repairs coarse software plans before falling back to generic execution tasks", async () => {
