@@ -28,10 +28,11 @@ export type StoredMission = {
   error?: string;
   createdAt: string;
   updatedAt: string;
+  runningSince?: string;
 };
 
 export type MissionUpdate = Partial<
-  Pick<StoredMission, "preview" | "status" | "stage" | "error">
+  Pick<StoredMission, "preview" | "status" | "stage" | "error" | "runningSince">
 >;
 
 export function appendMissionEvent(
@@ -206,6 +207,7 @@ function isStoredMission(value: unknown): value is StoredMission {
     isMissionStage(mission.stage) &&
     typeof mission.createdAt === "string" &&
     typeof mission.updatedAt === "string" &&
+    (mission.runningSince === undefined || typeof mission.runningSince === "string") &&
     (mission.error === undefined || typeof mission.error === "string")
   );
 }

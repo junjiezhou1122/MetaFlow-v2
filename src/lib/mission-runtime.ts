@@ -167,6 +167,14 @@ export type MissionChatModel = {
 
 type MissionDeepAgentModel = MissionChatModel | BaseLanguageModel;
 
+type DeepAgentRunner = {
+  invoke(input: unknown): Promise<unknown>;
+  streamEvents?: (
+    input: unknown,
+    options: { version: "v2" },
+  ) => AsyncIterable<unknown>;
+};
+
 export type MissionProgressStage =
   | "planning"
   | "building"
@@ -579,7 +587,7 @@ export async function runMultiAgentMission(
       "task.started",
       "Meta Agent started mission decomposition.",
     );
-    const plannerOutput = await runPlannerAgent(mission, preview, planner, model);
+    const plannerOutput = await runPlannerAgentWithRepair(mission, preview, planner, model);
     const plannedTasks = createDynamicExecutionTasks(
       plannerOutput.tasks,
       mission,
@@ -860,7 +868,11 @@ async function runNativeDeepAgentMission(
     "Meta Agent started native DeepAgents execution with skill middleware.",
   );
   const skillFiles = createDeepAgentSkillFiles(agentProfiles);
-  const agent = createMetaDeepAgent(createDefaultCapabilityRegistry(), model, agentProfiles);
+  const agent = createMetaDeepAgent(
+    createDefaultCapabilityRegistry(),
+    model,
+    agentProfiles,
+  ) as DeepAgentRunner;
 
   await onProgress?.({
     stage: "planning",
@@ -874,7 +886,7 @@ async function runNativeDeepAgentMission(
   });
 
   try {
-    const result = await agent.invoke({
+    const input = {
       messages: [
         {
           role: "user",
@@ -891,7 +903,17 @@ async function runNativeDeepAgentMission(
         },
       ],
       files: skillFiles,
-    });
+    };
+    const streamed = await runNativeDeepAgentWithEvents(
+      agent,
+      input,
+      preview,
+      events,
+      provider,
+      onProgress,
+    );
+    events = streamed.events;
+    const result = streamed.result;
     const output = extractDeepAgentOutput(result);
     const artifacts = extractArtifactsFromText(output);
     const report = extractRunReportFromText(output);
@@ -989,9 +1011,90 @@ async function runFallbackDirectMissionAfterNativeAttempt(
     "task.started",
     "Native DeepAgents produced no artifact blocks; falling back to direct artifact builder.",
   );
+  const planner = findAgent(agentProfiles, "planner");
   const builder = findAgent(agentProfiles, "builder");
   const reviewer = findAgent(agentProfiles, "reviewer");
-  const tasks = createDynamicExecutionTasks([], mission, agentProfiles);
+
+  events = appendRuntimeEvent(
+    events,
+    "task.started",
+    "Planner is creating mission-specific fallback tasks from the native DeepAgents context.",
+  );
+  await onProgress?.({
+    stage: "planning",
+    preview: {
+      ...preview,
+      events,
+      finalBrief: "Planner is creating mission-specific fallback tasks.",
+      mode: "deepagents",
+      provider,
+      finalOutput: nativeOutput,
+    },
+  });
+
+  const plannerOutput = await runWithProgressHeartbeat(
+    () => runPlannerAgentWithRepair(mission, preview, planner, model),
+    () => ({
+      stage: "planning",
+      preview: {
+        ...preview,
+        events: appendUniqueRuntimeEvent(
+          events,
+          "task.started",
+          `${planner.name} is still creating mission-specific tasks.`,
+        ),
+        finalBrief: "Planner is still creating mission-specific tasks.",
+        mode: "deepagents",
+        provider,
+        finalOutput: nativeOutput,
+      },
+    }),
+    onProgress,
+  );
+  const tasks = createDynamicExecutionTasks(
+    plannerOutput.tasks,
+    mission,
+    agentProfiles,
+  );
+  const runLogs: MissionRunLog[] = [
+    {
+      agent: "Meta Agent",
+      taskId: "native-deepagents",
+      level: "warning",
+      message: "Native DeepAgents completed without named artifact blocks.",
+    },
+    {
+      agent: planner.name,
+      taskId: "fallback-planner",
+      level: "info",
+      message: plannerOutput.finalBrief,
+    },
+  ];
+
+  events = appendRuntimeEvent(
+    events,
+    "task.assigned",
+    `Planner created ${tasks.length} mission-specific fallback task(s) across ${countAssignedAgents(
+      tasks,
+    )} agent(s).`,
+  );
+  events = appendTaskAssignmentEvents(events, tasks);
+  await onProgress?.({
+    stage: "planning",
+    preview: {
+      ...preview,
+      tasks,
+      events,
+      runLogs,
+      artifactKind: plannerOutput.artifactKind,
+      requiredSkills: plannerOutput.requiredSkills,
+      finalBrief: plannerOutput.finalBrief,
+      mode: "deepagents",
+      provider,
+      finalOutput: nativeOutput,
+    },
+  });
+
   const buildingTasks = markTasksRunning(
     tasks,
     selectImplementationTaskIds(tasks, selectArtifactTask(tasks).id),
@@ -1003,6 +1106,9 @@ async function runFallbackDirectMissionAfterNativeAttempt(
       ...preview,
       tasks: buildingTasks,
       events,
+      runLogs,
+      artifactKind: plannerOutput.artifactKind,
+      requiredSkills: plannerOutput.requiredSkills,
       finalBrief: "Direct builder is generating artifacts after native DeepAgents produced no artifact.",
       mode: "deepagents",
       provider,
@@ -1010,16 +1116,48 @@ async function runFallbackDirectMissionAfterNativeAttempt(
     },
   });
 
-  const builderOutput = await runBuilderAgent(mission, buildingTasks, builder, model, {
-    artifactKind: "web_app",
-    requiredSkills: ["artifact generation", "software implementation"],
-    selectedCapabilityIds: ["app-builder"],
-  });
+  const builderOutput = await runWithProgressHeartbeat(
+    () =>
+      runBuilderAgent(mission, buildingTasks, builder, model, {
+        artifactKind: plannerOutput.artifactKind,
+        requiredSkills: plannerOutput.requiredSkills,
+        selectedCapabilityIds: plannerOutput.selectedCapabilityIds,
+      }),
+    () => ({
+      stage: "building",
+      preview: {
+        ...preview,
+        tasks: buildingTasks,
+        events: appendUniqueRuntimeEvent(
+          events,
+          "task.started",
+          `${builder.name} is still generating the artifact.`,
+        ),
+        runLogs,
+        artifactKind: plannerOutput.artifactKind,
+        requiredSkills: plannerOutput.requiredSkills,
+        finalBrief: "Builder is still generating the artifact.",
+        mode: "deepagents",
+        provider,
+        finalOutput: nativeOutput,
+      },
+    }),
+    onProgress,
+  );
   const artifacts = extractArtifactsFromText(builderOutput);
   const afterBuildTasks = markTasksDone(
     tasks,
     selectImplementationTaskIds(tasks, selectArtifactTask(tasks).id),
   );
+  runLogs.push({
+    agent: builder.name,
+    taskId: "fallback-build",
+    level: artifacts.length > 0 ? "info" : "error",
+    message:
+      artifacts.length > 0
+        ? `Fallback builder generated ${artifacts.length} artifact file(s).`
+        : "Fallback builder returned no artifact blocks.",
+  });
   const review = await runReviewerAgentSafely(
     mission,
     afterBuildTasks,
@@ -1033,34 +1171,20 @@ async function runFallbackDirectMissionAfterNativeAttempt(
     error ? "mission.failed" : "mission.ready",
     error ?? "Fallback builder produced usable artifacts.",
   );
+  runLogs.push({
+    agent: reviewer.name,
+    taskId: "fallback-review",
+    level: review.passed ? "info" : "warning",
+    message: review.summary,
+  });
 
   return {
     ...preview,
     tasks: completeAllTasks(afterBuildTasks),
     events,
-    runLogs: [
-      {
-        agent: "Meta Agent",
-        taskId: "native-deepagents",
-        level: "warning",
-        message: "Native DeepAgents completed without named artifact blocks.",
-      },
-      {
-        agent: builder.name,
-        taskId: "fallback-build",
-        level: artifacts.length > 0 ? "info" : "error",
-        message:
-          artifacts.length > 0
-            ? `Fallback builder generated ${artifacts.length} artifact file(s).`
-            : "Fallback builder returned no artifact blocks.",
-      },
-      {
-        agent: reviewer.name,
-        taskId: "fallback-review",
-        level: review.passed ? "info" : "warning",
-        message: review.summary,
-      },
-    ],
+    runLogs,
+    artifactKind: plannerOutput.artifactKind,
+    requiredSkills: plannerOutput.requiredSkills,
     artifacts,
     mode: "deepagents",
     finalOutput: [nativeOutput, builderOutput, formatReviewOutput(review)].join("\n\n"),
@@ -1070,6 +1194,54 @@ async function runFallbackDirectMissionAfterNativeAttempt(
         ? "Native DeepAgents handled planning and skill discovery; fallback builder produced the artifact."
         : "Native DeepAgents and fallback builder completed, but no artifact code blocks were found.",
     provider,
+  };
+}
+
+async function runNativeDeepAgentWithEvents(
+  agent: DeepAgentRunner,
+  input: unknown,
+  preview: MissionPreview,
+  initialEvents: MissionEvent[],
+  provider: MissionPreview["provider"] | undefined,
+  onProgress?: (update: MissionProgressUpdate) => void | Promise<void>,
+): Promise<{ result: unknown; events: MissionEvent[] }> {
+  if (typeof agent.streamEvents !== "function") {
+    return {
+      result: await agent.invoke(input),
+      events: initialEvents,
+    };
+  }
+
+  let events = initialEvents;
+  let result: unknown;
+
+  for await (const streamEvent of agent.streamEvents(input, { version: "v2" })) {
+    const output = extractStreamEventOutput(streamEvent);
+    if (output !== undefined) {
+      result = output;
+    }
+
+    const message = formatDeepAgentStreamEvent(streamEvent);
+    if (!message) {
+      continue;
+    }
+
+    events = appendUniqueRuntimeEvent(events, streamEventType(message), message);
+    await onProgress?.({
+      stage: "planning",
+      preview: {
+        ...preview,
+        events,
+        finalBrief: message,
+        mode: "deepagents",
+        provider,
+      },
+    });
+  }
+
+  return {
+    result: result ?? "",
+    events,
   };
 }
 
@@ -1115,7 +1287,7 @@ export async function runMissionIteration(
   const reviewer = findAgent(agentProfiles, "reviewer");
 
   try {
-    const plannerOutput = await runPlannerAgent(
+    const plannerOutput = await runPlannerAgentWithRepair(
       missionContext,
       basePreview,
       planner,
@@ -1475,8 +1647,41 @@ async function runPlannerAgent(
     finalBrief:
       typeof report?.finalBrief === "string" && report.finalBrief.trim()
         ? report.finalBrief.trim()
-        : "Planner created the task plan.",
+      : "Planner created the task plan.",
   };
+}
+
+async function runPlannerAgentWithRepair(
+  mission: string,
+  preview: MissionPreview,
+  agent: AgentProfile,
+  model: MissionChatModel,
+): Promise<Required<Pick<MissionRunReport, "tasks" | "finalBrief">> &
+  Pick<MissionRunReport, "artifactKind" | "requiredSkills" | "selectedCapabilityIds">> {
+  const firstPlan = await runPlannerAgent(mission, preview, agent, model);
+  if (firstPlan.tasks.length > 0 && !isCoarseTaskPlan(firstPlan.tasks, mission)) {
+    return firstPlan;
+  }
+
+  const repairPreview: MissionPreview = {
+    ...preview,
+    tasks: firstPlan.tasks,
+    artifactKind: firstPlan.artifactKind,
+    requiredSkills: firstPlan.requiredSkills,
+    finalBrief: [
+      firstPlan.finalBrief,
+      "The previous planner output was too coarse. Return mission-specific section/feature tasks with concrete expected artifacts.",
+    ].join("\n"),
+  };
+  const repairedPlan = await runPlannerAgent(mission, repairPreview, agent, model);
+  if (repairedPlan.tasks.length > 0 && !isCoarseTaskPlan(repairedPlan.tasks, mission)) {
+    return {
+      ...repairedPlan,
+      finalBrief: repairedPlan.finalBrief || "Planner repaired the task plan.",
+    };
+  }
+
+  return firstPlan.tasks.length > 0 ? firstPlan : repairedPlan;
 }
 
 async function runBuilderAgent(
@@ -1740,6 +1945,36 @@ async function invokeModelWithRetry(
       },
     ];
     return model.invoke(retryPrompt);
+  }
+}
+
+async function runWithProgressHeartbeat<T>(
+  operation: () => Promise<T>,
+  createUpdate: () => MissionProgressUpdate,
+  onProgress?: (update: MissionProgressUpdate) => void | Promise<void>,
+  intervalMs = 15_000,
+): Promise<T> {
+  if (!onProgress) {
+    return operation();
+  }
+
+  let stopped = false;
+  const emitHeartbeat = async () => {
+    if (stopped) {
+      return;
+    }
+
+    await onProgress(createUpdate());
+  };
+  const timer = setInterval(() => {
+    void emitHeartbeat();
+  }, intervalMs);
+
+  try {
+    return await operation();
+  } finally {
+    stopped = true;
+    clearInterval(timer);
   }
 }
 
@@ -2122,6 +2357,117 @@ function extractDeepAgentOutput(result: unknown): string {
   return textParts.length > 0 ? textParts.join("\n\n") : extractMessageContent(value.content);
 }
 
+function extractStreamEventOutput(event: unknown): unknown {
+  if (!event || typeof event !== "object") {
+    return undefined;
+  }
+
+  const value = event as Record<string, unknown>;
+  const data = value.data;
+  if (!data || typeof data !== "object") {
+    return undefined;
+  }
+
+  const output = (data as Record<string, unknown>).output;
+  return output === undefined ? undefined : output;
+}
+
+function formatDeepAgentStreamEvent(event: unknown): string | null {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+
+  const value = event as Record<string, unknown>;
+  const eventName = typeof value.event === "string" ? value.event : "";
+  const runnableName = typeof value.name === "string" ? value.name : "tool";
+  const data = value.data && typeof value.data === "object"
+    ? (value.data as Record<string, unknown>)
+    : {};
+
+  if (eventName === "on_tool_start" && runnableName === "write_todos") {
+    const todos = extractTodoLabels(data.input);
+    return todos.length > 0
+      ? `DeepAgents updated todos: ${todos.join("; ")}`
+      : "DeepAgents updated todos.";
+  }
+
+  if (eventName === "on_tool_start" && runnableName === "task") {
+    const input = data.input && typeof data.input === "object"
+      ? (data.input as Record<string, unknown>)
+      : {};
+    const agent =
+      typeof input.subagent_type === "string" && input.subagent_type.trim()
+        ? input.subagent_type.trim()
+        : "subagent";
+    const description =
+      typeof input.description === "string" && input.description.trim()
+        ? input.description.trim()
+        : summarizeUnknown(input);
+    return `DeepAgents delegated task to ${agent}: ${description}`;
+  }
+
+  if (eventName === "on_tool_end" && runnableName === "task") {
+    return `DeepAgents completed task: ${summarizeUnknown(data.output)}`;
+  }
+
+  if (eventName === "on_tool_start") {
+    return `DeepAgents started tool ${runnableName}.`;
+  }
+
+  if (eventName === "on_tool_end") {
+    return `DeepAgents completed tool ${runnableName}.`;
+  }
+
+  return null;
+}
+
+function streamEventType(message: string): MissionEvent["type"] {
+  if (message.includes("delegated task") || message.includes("started tool")) {
+    return "task.started";
+  }
+  if (message.includes("completed task") || message.includes("completed tool")) {
+    return "task.reviewed";
+  }
+  return "task.assigned";
+}
+
+function extractTodoLabels(input: unknown): string[] {
+  if (!input || typeof input !== "object") {
+    return [];
+  }
+
+  const todos = (input as Record<string, unknown>).todos;
+  if (!Array.isArray(todos)) {
+    return [];
+  }
+
+  return todos
+    .map((todo) => {
+      if (typeof todo === "string") {
+        return todo.trim();
+      }
+      if (todo && typeof todo === "object") {
+        const record = todo as Record<string, unknown>;
+        return typeof record.content === "string"
+          ? record.content.trim()
+          : typeof record.task === "string"
+            ? record.task.trim()
+            : "";
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
+function summarizeUnknown(value: unknown): string {
+  const text = extractMessageContent(value).replace(/\s+/g, " ").trim();
+  if (!text) {
+    return "completed.";
+  }
+  return text.length > 180 ? `${text.slice(0, 177)}...` : text;
+}
+
 function isDeepAgentCompatibleModel(model: MissionDeepAgentModel): model is BaseLanguageModel {
   const candidate = model as Record<string, unknown>;
   return (
@@ -2279,7 +2625,7 @@ function createDynamicExecutionTasks(
   const sourceTasks =
     tasks.length > 0 && !isCoarseTaskPlan(tasks, mission)
       ? tasks
-      : createFeatureExecutionTasks(mission);
+      : createExecutionTasks(mission);
   const normalized = sourceTasks.map((task, index) =>
     normalizePlannedTask(task, index, agents),
   );
@@ -2344,221 +2690,32 @@ function normalizePlannedTask(
 }
 
 function isCoarseTaskPlan(tasks: MissionTask[], mission: string): boolean {
-  if (tasks.length < 4 && isSoftwareMission(mission.toLowerCase())) {
-    return true;
-  }
-
   const uniqueAssignedAgents = new Set(tasks.map((task) => task.assignedTo.toLowerCase()));
-  const genericTitles = tasks.filter((task) =>
-    /^(build artifact|review artifact|generate app|build app|review app)$/i.test(
-      task.title.trim(),
-    ),
-  ).length;
-
-  return tasks.length <= 3 && uniqueAssignedAgents.size <= 2 && genericTitles >= tasks.length - 1;
+  const genericTasks = tasks.filter((task) => isGenericPlannedTask(task)).length;
+  return (
+    tasks.length <= 3 &&
+    uniqueAssignedAgents.size <= 2 &&
+    genericTasks > 0 &&
+    genericTasks >= tasks.length - 1
+  );
 }
 
-function createFeatureExecutionTasks(mission: string): MissionTask[] {
-  const sections = inferMissionSections(mission);
-  return sections.map((section, index) => ({
-    id: `feature-${index + 1}`,
-    section: section.section,
-    feature: section.feature,
-    title: section.taskTitle,
-    description: `${section.taskDescription} Mission: ${mission}`,
-    assignedTo: section.assignedTo,
-    assignedAgentId: section.assignedAgentId,
-    requiredSkills: section.requiredSkills,
-    dependencies: index > 0 ? [`feature-${index}`] : [],
-    expectedArtifact: section.expectedArtifact,
-    status: "queued" as const,
-  }));
-}
-
-function inferMissionSections(mission: string) {
-  const normalized = mission.toLowerCase();
-  if (isSoftwareMission(normalized)) {
-    const sections = [
-      {
-        section: "Workspace",
-        feature: "Information architecture",
-        taskTitle: "Define app structure",
-        taskDescription: "Decide the primary screens, user flow, and visible app structure.",
-        assignedTo: "Product Planner",
-        assignedAgentId: "planner",
-        requiredSkills: ["mission analysis", "product planning"],
-        expectedArtifact: "app structure",
-      },
-    ];
-
-    if (/project|项目/.test(normalized)) {
-      sections.push(
-        {
-          section: "Projects",
-          feature: "Project list",
-          taskTitle: "Build project list",
-          taskDescription: "Implement project options and the selected project state.",
-          assignedTo: "App Builder",
-          assignedAgentId: "builder",
-          requiredSkills: ["software implementation", "state management"],
-          expectedArtifact: "project selector",
-        },
-        {
-          section: "Projects",
-          feature: "Project assignment",
-          taskTitle: "Assign tasks to projects",
-          taskDescription: "Connect each task to the active project and show that relationship in the UI.",
-          assignedTo: "App Builder",
-          assignedAgentId: "builder",
-          requiredSkills: ["data modeling", "software implementation"],
-          expectedArtifact: "project-task data model",
-        },
-      );
-    }
-
-    if (/board|kanban|看板/.test(normalized)) {
-      sections.push(
-        {
-          section: "Board",
-          feature: "Kanban columns",
-          taskTitle: "Create board columns",
-          taskDescription: "Implement visible Todo, Doing, and Done lanes with counts.",
-          assignedTo: "App Builder",
-          assignedAgentId: "builder",
-          requiredSkills: ["software implementation", "interface design"],
-          expectedArtifact: "board columns",
-        },
-        {
-          section: "Board",
-          feature: "Status movement",
-          taskTitle: "Move tasks between columns",
-          taskDescription: "Let users move each task between Todo, Doing, and Done states.",
-          assignedTo: "App Builder",
-          assignedAgentId: "builder",
-          requiredSkills: ["state management", "interaction design"],
-          expectedArtifact: "status transition controls",
-        },
-      );
-    }
-
-    sections.push(
-      {
-        section: "Tasks",
-        feature: "Task creation",
-        taskTitle: "Add new tasks",
-        taskDescription: "Implement the task input, validation, add action, and default status.",
-        assignedTo: "App Builder",
-        assignedAgentId: "builder",
-        requiredSkills: ["software implementation", "form handling"],
-        expectedArtifact: "task creation flow",
-      },
-      {
-        section: "Tasks",
-        feature: "Task cards",
-        taskTitle: "Render task cards",
-        taskDescription: "Display each task with its title, project, date, and available actions.",
-        assignedTo: "App Builder",
-        assignedAgentId: "builder",
-        requiredSkills: ["software implementation", "interface design"],
-        expectedArtifact: "task card UI",
-      },
-      {
-        section: "Tasks",
-        feature: "Task editing",
-        taskTitle: "Edit task names",
-        taskDescription: "Allow users to change existing task names without losing status or project.",
-        assignedTo: "App Builder",
-        assignedAgentId: "builder",
-        requiredSkills: ["software implementation", "state management"],
-        expectedArtifact: "task edit behavior",
-      },
-      {
-        section: "Tasks",
-        feature: "Task deletion",
-        taskTitle: "Delete tasks",
-        taskDescription: "Allow users to remove tasks and update lane counts immediately.",
-        assignedTo: "App Builder",
-        assignedAgentId: "builder",
-        requiredSkills: ["software implementation", "state management"],
-        expectedArtifact: "task delete behavior",
-      },
-      {
-        section: "Persistence",
-        feature: "Saved state",
-        taskTitle: "Persist user data",
-        taskDescription: "Store tasks, projects, and selected filters locally so the tool remains useful after reload.",
-        assignedTo: "App Builder",
-        assignedAgentId: "builder",
-        requiredSkills: ["localStorage", "data persistence"],
-        expectedArtifact: "persistent state code",
-      },
-      {
-        section: "Interface",
-        feature: "Empty states",
-        taskTitle: "Design empty and default states",
-        taskDescription: "Show useful empty column states and starter content so the app does not feel blank.",
-        assignedTo: "Interface Designer",
-        assignedAgentId: "designer",
-        requiredSkills: ["interface design", "user experience"],
-        expectedArtifact: "empty state UI",
-      },
-      {
-        section: "Quality",
-        feature: "Acceptance check",
-        taskTitle: "Verify generated tool",
-        taskDescription: "Check that the artifact satisfies the requested features and can be used directly.",
-        assignedTo: "QA Reviewer",
-        assignedAgentId: "reviewer",
-        requiredSkills: ["quality review", "requirements checking"],
-        expectedArtifact: "acceptance review",
-      },
-    );
-
-    return sections;
-  }
-
-  return [
-    {
-      section: "Outcome",
-      feature: "Mission framing",
-      taskTitle: "Frame the outcome",
-      taskDescription: "Turn the mission into a concrete deliverable structure.",
-      assignedTo: "Product Planner",
-      assignedAgentId: "planner",
-      requiredSkills: ["mission analysis"],
-      expectedArtifact: "delivery plan",
-    },
-    {
-      section: "Artifact",
-      feature: "Main deliverable",
-      taskTitle: "Create deliverable",
-      taskDescription: "Produce the requested artifact directly.",
-      assignedTo: "Builder",
-      assignedAgentId: "builder",
-      requiredSkills: ["artifact generation"],
-      expectedArtifact: "user artifact",
-    },
-    {
-      section: "Quality",
-      feature: "Acceptance check",
-      taskTitle: "Review deliverable",
-      taskDescription: "Check the deliverable against the mission.",
-      assignedTo: "Reviewer",
-      assignedAgentId: "reviewer",
-      requiredSkills: ["quality review"],
-      expectedArtifact: "acceptance review",
-    },
-  ];
+function isGenericPlannedTask(task: MissionTask): boolean {
+  return /^(build artifact|review artifact|generate app|build app|review app)$/i.test(
+    task.title.trim(),
+  );
 }
 
 function inferTaskSection(task: MissionTask): string | undefined {
   if (isReviewTask(task)) return "Quality";
+  if (task.assignedAgentId === "planner") return "Planning";
   if (isArtifactTask(task)) return "Artifact";
   return undefined;
 }
 
 function inferTaskFeature(task: MissionTask): string | undefined {
   if (isReviewTask(task)) return "Acceptance check";
+  if (task.assignedAgentId === "planner") return "Mission shape";
   if (isArtifactTask(task)) return "Main deliverable";
   return undefined;
 }
@@ -2638,6 +2795,9 @@ function selectImplementationTaskIds(tasks: MissionTask[], fallbackId: string): 
 
 function isImplementationTask(task: MissionTask): boolean {
   if (isReviewTask(task)) {
+    return false;
+  }
+  if (task.assignedAgentId === "planner") {
     return false;
   }
 

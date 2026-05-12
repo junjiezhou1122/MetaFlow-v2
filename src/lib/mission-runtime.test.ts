@@ -1,4 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("deepagents", () => ({
+  createDeepAgent: ({ model }: { model: { invoke(input: unknown): Promise<unknown> } }) => ({
+    invoke: (input: unknown) => model.invoke(input),
+    streamEvents:
+      "streamEvents" in model
+        ? (input: unknown, options: unknown) =>
+            (
+              model as {
+                streamEvents(input: unknown, options: unknown): AsyncIterable<unknown>;
+              }
+            ).streamEvents(input, options)
+        : undefined,
+  }),
+}));
 
 import {
   buildMissionPreview,
@@ -400,12 +415,275 @@ describe("mission runtime", () => {
     expect(preview.artifacts?.[0]?.filename).toBe("index.html");
   });
 
-  it("expands coarse software plans into section and feature-level tasks", async () => {
-    const runningFeatureCounts: number[] = [];
+  it("uses planner tasks when native DeepAgents falls back to direct building", async () => {
+    const progressEvents: string[] = [];
     const model = {
+      withConfig: () => model,
+      invoke: async (input: unknown) => {
+        const prompt = Array.isArray(input)
+          ? input.map((message) => String(message.content ?? "")).join("\n")
+          : JSON.stringify(input);
+
+        if (prompt.includes("Execute this mission end to end.")) {
+          return {
+            messages: [
+              {
+                content:
+                  "I inspected skills and planned the mission, but I am returning no named artifact block.",
+              },
+            ],
+          };
+        }
+
+        if (prompt.includes("Planner agent")) {
+          return {
+            content: [
+              "```json filename=\"planner-output.json\"",
+              JSON.stringify({
+                finalBrief: "Planned a learning-agent app with mission-specific features.",
+                artifactKind: "web_app",
+                requiredSkills: ["agent education", "software implementation"],
+                selectedCapabilityIds: ["app-builder"],
+                tasks: [
+                  {
+                    id: "agent-concepts",
+                    section: "Learning",
+                    feature: "Agent concepts",
+                    title: "Teach agent basics",
+                    description: "Create a guided explanation of agent profiles, tools, and skills.",
+                    assignedTo: "Product Planner",
+                    assignedAgentId: "planner",
+                    requiredSkills: ["agent education"],
+                    dependencies: [],
+                    expectedArtifact: "learning outline",
+                    status: "queued",
+                  },
+                  {
+                    id: "practice-lab",
+                    section: "Practice",
+                    feature: "Interactive lab",
+                    title: "Build agent practice lab",
+                    description: "Implement an interactive exercise area for creating a sample agent.",
+                    assignedTo: "App Builder",
+                    assignedAgentId: "builder",
+                    requiredSkills: ["software implementation"],
+                    dependencies: ["agent-concepts"],
+                    expectedArtifact: "index.html",
+                    status: "queued",
+                  },
+                  {
+                    id: "learning-review",
+                    section: "Quality",
+                    feature: "Acceptance check",
+                    title: "Review learning flow",
+                    description: "Check that the app teaches agent concepts instead of todo management.",
+                    assignedTo: "QA Reviewer",
+                    assignedAgentId: "reviewer",
+                    requiredSkills: ["quality review"],
+                    dependencies: ["practice-lab"],
+                    expectedArtifact: "review",
+                    status: "queued",
+                  },
+                ],
+              }),
+              "```",
+            ].join("\n"),
+          };
+        }
+
+        if (prompt.includes("You are Builder.")) {
+          return {
+            content:
+              "```html filename=\"index.html\"\n<!doctype html><html><body><main><h1>学习 Agent</h1><section>Agent profile, tools, skills</section><button>创建练习 Agent</button><script>localStorage.setItem('agent-lab','ready')</script></main></body></html>\n```",
+          };
+        }
+
+        return {
+          content:
+            "```json filename=\"review.json\"\n{\"passed\":true,\"issues\":[],\"requiredFixes\":[],\"summary\":\"Learning-agent app accepted.\"}\n```",
+        };
+      },
+    };
+
+    const preview = await runMultiAgentMission(
+      "做一个学习agent的应用",
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+      async (update) => {
+        progressEvents.push(update.preview.events.at(-1)?.message ?? "");
+      },
+    );
+
+    expect(preview.tasks.map((task) => task.id)).toEqual([
+      "agent-concepts",
+      "practice-lab",
+      "learning-review",
+    ]);
+    expect(preview.tasks.map((task) => task.feature)).toContain("Agent concepts");
+    expect(preview.tasks.map((task) => task.feature)).not.toContain("Task creation");
+    expect(progressEvents.some((event) => event.includes("Planner is creating"))).toBe(true);
+    expect(preview.artifacts?.[0]?.content).toContain("学习 Agent");
+  });
+
+  it("streams native DeepAgents tool events into mission progress", async () => {
+    const progressEvents: string[] = [];
+    const model = {
+      withConfig: () => model,
+      async *streamEvents() {
+        yield {
+          event: "on_tool_start",
+          name: "write_todos",
+          data: {
+            input: {
+              todos: [
+                { content: "Plan scoreboard app", status: "in_progress" },
+                { content: "Build scoring controls", status: "pending" },
+              ],
+            },
+          },
+        };
+        yield {
+          event: "on_tool_start",
+          name: "task",
+          data: {
+            input: {
+              description: "Builder should implement team scoring controls.",
+              subagent_type: "builder",
+            },
+          },
+        };
+        yield {
+          event: "on_tool_end",
+          name: "task",
+          data: {
+            output: "Builder returned a complete scoreboard artifact.",
+          },
+        };
+        yield {
+          event: "on_chain_end",
+          name: "meta-agent",
+          data: {
+            output: {
+              messages: [
+                {
+                  content:
+                    "```html filename=\"index.html\"\n<!doctype html><html><body><main>Scoreboard<script>let score=0</script></main></body></html>\n```",
+                },
+              ],
+            },
+          },
+        };
+      },
+      invoke: async () => {
+        throw new Error("Native stream path should not call invoke.");
+      },
+    };
+
+    const preview = await runMultiAgentMission(
+      "做一个比赛积分应用",
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+      async (update) => {
+        progressEvents.push(update.preview.events.at(-1)?.message ?? "");
+      },
+    );
+
+    expect(progressEvents).toEqual(
+      expect.arrayContaining([
+        "DeepAgents updated todos: Plan scoreboard app; Build scoring controls",
+        "DeepAgents delegated task to builder: Builder should implement team scoring controls.",
+        "DeepAgents completed task: Builder returned a complete scoreboard artifact.",
+      ]),
+    );
+    expect(preview.events.map((event) => event.message)).toEqual(
+      expect.arrayContaining([
+        "DeepAgents updated todos: Plan scoreboard app; Build scoring controls",
+        "DeepAgents delegated task to builder: Builder should implement team scoring controls.",
+        "DeepAgents completed task: Builder returned a complete scoreboard artifact.",
+      ]),
+    );
+    expect(preview.artifacts?.[0]?.filename).toBe("index.html");
+  });
+
+  it("repairs coarse software plans before falling back to generic execution tasks", async () => {
+    const runningTaskCounts: number[] = [];
+    const model = {
+      plannerCalls: 0,
       invoke: async (messages: Array<{ role: string; content: string }>) => {
         const prompt = messages.map((message) => message.content).join("\n");
         if (prompt.includes("Planner agent")) {
+          model.plannerCalls += 1;
+          if (model.plannerCalls > 1) {
+            return {
+              content: [
+                "```json filename=\"planner-output.json\"",
+                JSON.stringify({
+                  finalBrief: "Planner repaired the coarse todo plan.",
+                  artifactKind: "web_app",
+                  requiredSkills: ["software implementation"],
+                  selectedCapabilityIds: ["app-builder"],
+                  tasks: [
+                    {
+                      id: "board-columns",
+                      section: "Board",
+                      feature: "Kanban columns",
+                      title: "Create board columns",
+                      description: "Implement Todo, Doing, and Done lanes with counts.",
+                      assignedTo: "App Builder",
+                      assignedAgentId: "builder",
+                      requiredSkills: ["software implementation"],
+                      dependencies: [],
+                      expectedArtifact: "board columns",
+                      status: "queued",
+                    },
+                    {
+                      id: "project-selector",
+                      section: "Projects",
+                      feature: "Project selector",
+                      title: "Build project selector",
+                      description: "Let users select a project for each todo.",
+                      assignedTo: "App Builder",
+                      assignedAgentId: "builder",
+                      requiredSkills: ["state management"],
+                      dependencies: ["board-columns"],
+                      expectedArtifact: "project selector",
+                      status: "queued",
+                    },
+                    {
+                      id: "todo-card-crud",
+                      section: "Tasks",
+                      feature: "Todo card CRUD",
+                      title: "Build todo card CRUD",
+                      description: "Add, edit, delete, and move todo cards.",
+                      assignedTo: "App Builder",
+                      assignedAgentId: "builder",
+                      requiredSkills: ["software implementation"],
+                      dependencies: ["project-selector"],
+                      expectedArtifact: "todo interactions",
+                      status: "queued",
+                    },
+                    {
+                      id: "todo-review",
+                      section: "Quality",
+                      feature: "Acceptance check",
+                      title: "Review todo board",
+                      description: "Verify the project board and todo interactions.",
+                      assignedTo: "QA Reviewer",
+                      assignedAgentId: "reviewer",
+                      requiredSkills: ["quality review"],
+                      dependencies: ["todo-card-crud"],
+                      expectedArtifact: "review",
+                      status: "queued",
+                    },
+                  ],
+                }),
+                "```",
+              ].join("\n"),
+            };
+          }
+
           return {
             content: [
               "```json filename=\"planner-output.json\"",
@@ -457,28 +735,24 @@ describe("mission runtime", () => {
       createDefaultAgentProfiles(),
       async (update) => {
         if (update.stage === "building") {
-          runningFeatureCounts.push(
+          runningTaskCounts.push(
             update.preview.tasks.filter((task) => task.status === "running").length,
           );
         }
       },
     );
 
-    expect(preview.tasks.length).toBeGreaterThanOrEqual(9);
+    expect(model.plannerCalls).toBe(2);
+    expect(preview.tasks.map((task) => task.id)).toEqual([
+      "board-columns",
+      "project-selector",
+      "todo-card-crud",
+      "todo-review",
+    ]);
     expect(preview.tasks.map((task) => task.section)).toEqual(
-      expect.arrayContaining(["Workspace", "Projects", "Board", "Tasks", "Persistence"]),
+      expect.arrayContaining(["Projects", "Board", "Tasks", "Quality"]),
     );
-    expect(preview.tasks.map((task) => task.feature)).toEqual(
-      expect.arrayContaining([
-        "Project list",
-        "Kanban columns",
-        "Task creation",
-        "Task cards",
-        "Status movement",
-        "Saved state",
-      ]),
-    );
-    expect(Math.max(...runningFeatureCounts)).toBeGreaterThanOrEqual(5);
+    expect(Math.max(...runningTaskCounts)).toBe(3);
     expect(preview.events.some((event) => event.message.includes("feature-level"))).toBe(true);
   });
 

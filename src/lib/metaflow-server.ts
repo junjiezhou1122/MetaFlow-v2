@@ -80,6 +80,7 @@ async function executeMission(mission: StoredMission, settingsInput: unknown) {
       status: "running",
       stage: "planning",
       error: undefined,
+      runningSince: new Date().toISOString(),
     });
 
     const preview = await runMultiAgentMission(
@@ -101,6 +102,7 @@ async function executeMission(mission: StoredMission, settingsInput: unknown) {
       stage: preview.error ? "failed" : "done",
       preview,
       error: preview.error,
+      runningSince: undefined,
     });
   } catch (error) {
     const latestMission = (await missionStore.get(mission.id)) ?? mission;
@@ -112,6 +114,7 @@ async function executeMission(mission: StoredMission, settingsInput: unknown) {
       stage: "failed",
       preview: appendMissionEvent(basePreview, "mission.failed", message),
       error: message,
+      runningSince: undefined,
     });
   } finally {
     stopWatchdog();
@@ -145,6 +148,7 @@ async function executeMissionIteration(
       status: "running",
       stage: "planning",
       error: undefined,
+      runningSince: new Date().toISOString(),
     });
 
     const latestMission = (await missionStore.get(mission.id)) ?? mission;
@@ -169,6 +173,7 @@ async function executeMissionIteration(
       stage: preview.error ? "failed" : "done",
       preview,
       error: preview.error,
+      runningSince: undefined,
     });
   } catch (error) {
     const latestMission = (await missionStore.get(mission.id)) ?? mission;
@@ -179,6 +184,7 @@ async function executeMissionIteration(
       stage: "failed",
       preview: appendMissionEvent(basePreview, "mission.failed", message),
       error: message,
+      runningSince: undefined,
     });
   } finally {
     stopWatchdog();
@@ -212,8 +218,8 @@ function startStallWatchdog(missionId: string): () => void {
       return;
     }
 
-    const lastUpdate = new Date(mission.updatedAt).getTime();
-    if (!Number.isFinite(lastUpdate) || Date.now() - lastUpdate < stalledAfterMs) {
+    const runningSince = new Date(mission.runningSince ?? mission.updatedAt).getTime();
+    if (!Number.isFinite(runningSince) || Date.now() - runningSince < stalledAfterMs) {
       return;
     }
 
@@ -222,6 +228,7 @@ function startStallWatchdog(missionId: string): () => void {
       stage: "stalled",
       error:
         "No progress has been observed for a while. The model call may still be pending; you can retry or continue the mission.",
+      runningSince: undefined,
     });
     runningMissionIds.delete(id);
   }
