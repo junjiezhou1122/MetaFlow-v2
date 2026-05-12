@@ -1,4 +1,4 @@
-import type { AgentProfile } from "./mission-runtime";
+import type { AgentProfile, AgentSkill } from "./mission-runtime";
 
 export type MarketAgent = AgentProfile & {
   source: "market";
@@ -398,6 +398,16 @@ function convertAgencyMarkdownToMarketAgent(seed: AgencySeed): MarketAgent {
   const successCriteria = missionLines.slice(0, 5);
   const category = seed.path.split("/")[0] ?? "general";
   const marketId = seed.path.replace(/\.md$/, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+  const originUrl = `${agencyOriginBase}/${seed.path}`;
+  const skillDetails = createSkillDetails({
+    body,
+    category,
+    description: frontmatter.description || `${name} from agency-agents.`,
+    marketId,
+    name,
+    originUrl,
+    skills,
+  });
 
   return {
     id: `market-template-${marketId}`,
@@ -405,6 +415,9 @@ function convertAgencyMarkdownToMarketAgent(seed: AgencySeed): MarketAgent {
     name,
     description: frontmatter.description || `${name} from agency-agents.`,
     skills,
+    skillIds: skillDetails.map((skill) => skill.id),
+    skillDetails,
+    instructions: body.trim(),
     taskScope:
       missionLines.slice(0, 3).join(" ") ||
       frontmatter.vibe ||
@@ -419,9 +432,45 @@ function convertAgencyMarkdownToMarketAgent(seed: AgencySeed): MarketAgent {
     category,
     tags: [category, ...skills].slice(0, 8),
     originPath: seed.path,
-    originUrl: `${agencyOriginBase}/${seed.path}`,
+    originUrl,
     license: agencyLicense,
   };
+}
+
+function createSkillDetails(input: {
+  body: string;
+  category: string;
+  description: string;
+  marketId: string;
+  name: string;
+  originUrl: string;
+  skills: string[];
+}): AgentSkill[] {
+  const primarySkillName = `${input.name} Playbook`;
+  const skillMarkdown = [
+    `# ${primarySkillName}`,
+    "",
+    "Imported directly from the source agent markdown. MetaFlow treats this as the agent's runnable instruction skill.",
+    "",
+    input.body.trim(),
+  ]
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+
+  return [
+    {
+      id: `market-skill-${input.marketId}`,
+      name: primarySkillName,
+      description: input.description,
+      markdown: skillMarkdown,
+      category: input.category,
+      source: "market",
+      originUrl: input.originUrl,
+      trustLevel: "markdown_only",
+      fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+    },
+  ];
 }
 
 function parseFrontmatter(markdown: string): Record<string, string> {

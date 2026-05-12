@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createChatModel } from "./model-factory";
+import { createChatModel, createDirectChatModel } from "./model-factory";
 
 describe("model factory", () => {
   afterEach(() => {
@@ -38,7 +38,7 @@ describe("model factory", () => {
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
     );
-    const model = createChatModel({
+    const model = createDirectChatModel({
       provider: "openai-compatible",
       apiKey: "sk-test",
       baseUrl: "https://llm.example.com/v1",
@@ -61,7 +61,7 @@ describe("model factory", () => {
 
   it("wraps OpenAI-compatible fetch failures with provider context", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("fetch failed"));
-    const model = createChatModel({
+    const model = createDirectChatModel({
       provider: "openai-compatible",
       apiKey: "sk-test",
       baseUrl: "https://llm.example.com/v1",
@@ -84,7 +84,7 @@ describe("model factory", () => {
         },
       }),
     );
-    const model = createChatModel({
+    const model = createDirectChatModel({
       provider: "openai-compatible",
       apiKey: "sk-test",
       baseUrl: "http://181.215.5.243:3009/v1",

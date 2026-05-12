@@ -11,6 +11,7 @@ import {
   runMultiAgentMission,
 } from "./mission-runtime";
 import { createChatModel } from "./model-factory";
+import { createSkillLibraryAgent, loadWorkspaceSkills } from "./skill-registry";
 import { FileSettingsStore } from "./settings-store";
 import {
   normalizeProviderSettings,
@@ -72,7 +73,7 @@ async function executeMission(mission: StoredMission, settingsInput: unknown) {
       ? sanitizeProviderSettings(settingsSource as Partial<ProviderSettings>)
       : sanitizeProviderSettings(null);
   const model = createChatModel(rawSettings);
-  const agents = await agentRegistry.list();
+  const agents = await loadRuntimeAgents(mission.input);
 
   try {
     await missionStore.update(mission.id, {
@@ -137,7 +138,7 @@ async function executeMissionIteration(
       ? sanitizeProviderSettings(settingsSource as Partial<ProviderSettings>)
       : sanitizeProviderSettings(null);
   const model = createChatModel(rawSettings);
-  const agents = await agentRegistry.list();
+  const agents = await loadRuntimeAgents([mission.input, prompt].join("\n"));
 
   try {
     await missionStore.update(mission.id, {
@@ -182,6 +183,12 @@ async function executeMissionIteration(
   } finally {
     stopWatchdog();
   }
+}
+
+async function loadRuntimeAgents(query: string) {
+  const agents = await agentRegistry.list();
+  const skillLibraryAgent = createSkillLibraryAgent(await loadWorkspaceSkills(undefined, query));
+  return skillLibraryAgent ? [...agents, skillLibraryAgent] : agents;
 }
 
 function startStallWatchdog(missionId: string): () => void {

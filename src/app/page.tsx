@@ -331,6 +331,9 @@ export default function Home() {
       name: "New Agent",
       description: "",
       skills: [],
+      skillIds: [],
+      skillDetails: [],
+      instructions: "",
       taskScope: "",
       successCriteria: [],
       temporary: false,
@@ -889,6 +892,20 @@ function AgentsView(props: {
                     placeholder="planning, building, review"
                   />
                 </label>
+                {props.activeAgent.skillDetails?.length ? (
+                  <div className="agentSkillCards">
+                    {props.activeAgent.skillDetails.map((skill) => (
+                      <details key={skill.id}>
+                        <summary>
+                          <span>{skill.category ?? "skill"}</span>
+                          <strong>{skill.name}</strong>
+                        </summary>
+                        <p>{skill.description}</p>
+                        <pre>{skill.markdown}</pre>
+                      </details>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="settingsActions">
                   <span>{props.agentSaved ? "Saved" : ""}</span>
                   <button type="button" onClick={props.onSaveAgent}>
@@ -942,14 +959,24 @@ function AgentsView(props: {
                 <div className="marketDetailBlock">
                   <span>Skills</span>
                   <div className="marketSkillDetailList">
-                    {selectedMarketAgent.skills.map((skill) => (
-                      <article key={skill}>
-                        <strong>{skill}</strong>
-                        <p>{describeAgentSkill(skill)}</p>
-                      </article>
+                    {(selectedMarketAgent.skillDetails ?? []).map((skill) => (
+                      <details key={skill.id}>
+                        <summary>
+                          <strong>{skill.name}</strong>
+                          <small>{skill.category ?? "skill"}</small>
+                        </summary>
+                        <p>{skill.description}</p>
+                        <pre>{skill.markdown}</pre>
+                      </details>
                     ))}
                   </div>
                 </div>
+                {selectedMarketAgent.instructions ? (
+                  <details className="marketInstructionBlock">
+                    <summary>Agent instructions</summary>
+                    <pre>{selectedMarketAgent.instructions}</pre>
+                  </details>
+                ) : null}
                 <div className="marketDetailSource">
                   <span>{selectedMarketAgent.license}</span>
                   <a href={selectedMarketAgent.originUrl} target="_blank" rel="noreferrer">
@@ -1043,9 +1070,6 @@ function ArtifactItem(props: {
 }) {
   const artifactRef = useRef<HTMLElement | null>(null);
   const previewHtml = createPreviewDocument(props.artifact, props.artifacts);
-  const [activeView, setActiveView] = useState<"preview" | "code">(
-    previewHtml ? "preview" : "code",
-  );
   const [isFullscreen, setIsFullscreen] = useState(false);
   const sizeLabel = `${(props.artifact.content.length / 1024).toFixed(1)} KB`;
 
@@ -1068,7 +1092,6 @@ function ArtifactItem(props: {
       return;
     }
 
-    setActiveView("preview");
     await artifactRef.current.requestFullscreen();
   }
 
@@ -1083,35 +1106,16 @@ function ArtifactItem(props: {
         </div>
         <div className="artifactActions">
           {previewHtml ? (
-            <button
-              className={activeView === "preview" ? "selected" : ""}
-              type="button"
-              onClick={() => setActiveView("preview")}
-            >
-              Preview
-            </button>
-          ) : null}
-          {previewHtml ? (
             <button type="button" onClick={() => void toggleFullscreen()}>
               {isFullscreen ? "Exit" : "Fullscreen"}
             </button>
           ) : null}
-          <button
-            className={activeView === "code" ? "selected" : ""}
-            type="button"
-            onClick={() => setActiveView("code")}
-          >
-            Code
-          </button>
-          <button type="button" onClick={() => downloadArtifact(props.artifact)}>
-            Download
-          </button>
           <button type="button" onClick={() => downloadPackage(props.artifacts)}>
             Package
           </button>
         </div>
       </div>
-      {previewHtml && activeView === "preview" ? (
+      {previewHtml ? (
         <iframe
           className="artifactPreview"
           sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
@@ -1119,7 +1123,6 @@ function ArtifactItem(props: {
           title={props.artifact.filename}
         />
       ) : null}
-      {activeView === "code" ? <pre>{props.artifact.content}</pre> : null}
     </article>
   );
 }
@@ -1272,36 +1275,6 @@ function upsertAgent(agents: AgentProfile[], agent: AgentProfile): AgentProfile[
   return agents.map((item) => (item.id === agent.id ? agent : item));
 }
 
-function describeAgentSkill(skill: string): string {
-  const normalized = skill.toLowerCase();
-  const descriptions: Record<string, string> = {
-    frontend: "Builds user-facing web interfaces, components, responsive layouts, and browser interactions.",
-    backend: "Designs APIs, data models, service boundaries, and server-side implementation plans.",
-    architecture: "Defines system structure, trade-offs, boundaries, and long-term technical direction.",
-    security: "Finds trust-boundary, auth, data exposure, and vulnerability risks before release.",
-    review: "Checks output for correctness, maintainability, missing requirements, and regressions.",
-    testing: "Creates validation plans, edge cases, and evidence that the deliverable works.",
-    accessibility: "Checks keyboard, semantic, contrast, and assistive-technology usability.",
-    design: "Shapes visual hierarchy, layout, interaction states, and design system consistency.",
-    research: "Finds user, market, or technical evidence to guide decisions.",
-    product: "Clarifies user value, scope, acceptance criteria, and product trade-offs.",
-    planning: "Breaks ambiguous work into ordered tasks, owners, dependencies, and milestones.",
-    documentation: "Turns implementation details into clear docs, guides, references, and release notes.",
-    devops: "Automates build, deployment, infrastructure, monitoring, and operational workflows.",
-    automation: "Removes manual repeated work with scripts, workflows, and repeatable processes.",
-    data: "Builds data flows, schemas, transformations, quality checks, and analysis-ready outputs.",
-    ai: "Designs AI features, prompts, evaluation loops, retrieval, and model integration.",
-    marketing: "Creates messaging, content plans, campaign copy, and audience-specific positioning.",
-    sales: "Shapes buyer-facing proposals, win themes, objections, and deal narratives.",
-    finance: "Builds forecasts, models, scenarios, and number-backed decision support.",
-    proposal: "Turns requirements and buyer context into a persuasive response structure.",
-    performance: "Improves speed, latency, rendering cost, scalability, and user-perceived responsiveness.",
-    api: "Validates endpoint contracts, integrations, auth behavior, schemas, and failure cases.",
-  };
-
-  return descriptions[normalized] ?? `Applies ${skill} expertise to the assigned mission work.`;
-}
-
 function upsertApp(apps: SavedApp[], app: SavedApp): SavedApp[] {
   const exists = apps.some((item) => item.id === app.id);
   if (!exists) {
@@ -1318,10 +1291,6 @@ function splitList(value: string): string[] {
     .filter(Boolean);
 }
 
-function downloadArtifact(artifact: MissionArtifact) {
-  downloadFile(artifact.filename, artifact.content, contentTypeFor(artifact));
-}
-
 function downloadPackage(artifacts: MissionArtifact[]) {
   const zip = createZip(
     artifacts.map((artifact) => ({
@@ -1332,11 +1301,6 @@ function downloadPackage(artifacts: MissionArtifact[]) {
   downloadBlob("metaflow-artifacts.zip", zip, "application/zip");
 }
 
-function downloadFile(filename: string, content: string, type: string) {
-  const blob = new Blob([content], { type });
-  downloadBlob(filename, blob, type);
-}
-
 function downloadBlob(filename: string, blob: Blob, type: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -1344,34 +1308,6 @@ function downloadBlob(filename: string, blob: Blob, type: string) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
-}
-
-function contentTypeFor(artifact: MissionArtifact): string {
-  if (artifact.type === "html") {
-    return "text/html";
-  }
-
-  if (artifact.type === "css") {
-    return "text/css";
-  }
-
-  if (artifact.type === "javascript" || artifact.type === "react") {
-    return "text/javascript";
-  }
-
-  if (artifact.type === "typescript") {
-    return "text/typescript";
-  }
-
-  if (artifact.type === "json") {
-    return "application/json";
-  }
-
-  if (artifact.type === "markdown") {
-    return "text/markdown";
-  }
-
-  return "text/plain";
 }
 
 function createPreviewDocument(

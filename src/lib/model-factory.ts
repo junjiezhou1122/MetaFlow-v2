@@ -1,4 +1,5 @@
 import { ChatAnthropic } from "@langchain/anthropic";
+import { ChatOpenAI } from "@langchain/openai";
 
 import type { ProviderSettings } from "./provider-settings";
 
@@ -32,6 +33,27 @@ export function createChatModel(settings: ProviderSettings) {
       temperature: 0,
       maxRetries: 1,
     });
+  }
+
+  return new ChatOpenAI({
+    apiKey,
+    model: settings.model,
+    temperature: 0,
+    maxRetries: 1,
+    configuration: {
+      baseURL: settings.baseUrl,
+    },
+  });
+}
+
+export function createDirectChatModel(settings: ProviderSettings) {
+  const apiKey = settings.apiKey.trim();
+  if (!apiKey) {
+    return null;
+  }
+
+  if (settings.provider === "anthropic-compatible") {
+    return createChatModel(settings);
   }
 
   return new OpenAICompatibleChatModel({

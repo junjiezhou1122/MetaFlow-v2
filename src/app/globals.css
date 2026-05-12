@@ -400,6 +400,59 @@ button {
   min-height: 230px;
 }
 
+.agentSkillCards {
+  display: grid;
+  gap: 8px;
+}
+
+.agentSkillCards details,
+.marketSkillDetailList details,
+.marketInstructionBlock {
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+}
+
+.agentSkillCards summary,
+.marketSkillDetailList summary,
+.marketInstructionBlock summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.agentSkillCards summary span {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+}
+
+.agentSkillCards p,
+.marketSkillDetailList p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.agentSkillCards pre,
+.marketSkillDetailList pre,
+.marketInstructionBlock pre {
+  background: rgb(18 18 18 / 0.04);
+  color: var(--ink);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
 .marketLayout {
   display: grid;
   gap: 10px;

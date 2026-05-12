@@ -41,7 +41,7 @@ export function listMissionHistory<T extends MissionHistoryItem>(missions: T[]):
 }
 
 export function getMissionStatus(
-  mission: Pick<MissionHistoryItem, "preview" | "status">,
+  mission: Pick<MissionHistoryItem, "preview" | "status"> & Partial<Pick<MissionHistoryItem, "input">>,
 ): MissionStatus {
   if (
     mission.status === "running" ||

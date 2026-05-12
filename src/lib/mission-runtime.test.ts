@@ -5,6 +5,7 @@ import {
   createDefaultCapabilityRegistry,
   createDefaultAgentProfiles,
   createMetaAgentDefinition,
+  __missionRuntimeTestUtils,
   extractArtifactsFromText,
   extractRunReportFromText,
   runMultiAgentMission,
@@ -47,11 +48,31 @@ describe("mission runtime", () => {
 
     expect(metaAgent.name).toBe("meta-agent");
     expect(metaAgent.subagents.map((agent) => agent.name)).toContain("researcher");
+    expect(metaAgent.subagents.find((agent) => agent.name === "builder")?.skills).toEqual([
+      "/skills/",
+    ]);
     expect(metaAgent.tools.map((tool) => tool.name)).toEqual(
       expect.arrayContaining([
         "search_capabilities",
         "create_ephemeral_agent",
         "assign_task",
+      ]),
+    );
+  });
+
+  it("materializes agent skills as DeepAgents SKILL.md files", () => {
+    const files = __missionRuntimeTestUtils.createDeepAgentSkillFiles(
+      createDefaultAgentProfiles(),
+    );
+    const builderSkill = files["/skills/system-artifact-generation/SKILL.md"];
+
+    expect(builderSkill?.content.join("\n")).toContain("name: system-artifact-generation");
+    expect(builderSkill?.content.join("\n")).toContain("Artifact Generation");
+    expect(Object.keys(files)).toEqual(
+      expect.arrayContaining([
+        "/skills/system-mission-planning/SKILL.md",
+        "/skills/system-artifact-generation/SKILL.md",
+        "/skills/system-artifact-review/SKILL.md",
       ]),
     );
   });

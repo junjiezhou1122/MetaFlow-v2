@@ -13,6 +13,31 @@ export function createDefaultAgentProfiles(): AgentProfile[] {
       name: "Planner",
       description: "Breaks a mission into small tasks and chooses the right agent profile for each task.",
       skills: ["mission analysis", "task planning", "agent routing"],
+      skillIds: ["system-mission-planning"],
+      skillDetails: [
+        {
+          id: "system-mission-planning",
+          name: "Mission Planning",
+          description: "Convert a user's mission into sections, feature tasks, dependencies, and agent assignments.",
+          markdown: [
+            "# Mission Planning",
+            "",
+            "Use this skill when a broad mission needs to become executable work.",
+            "",
+            "## Procedure",
+            "- Identify the requested outcome and artifact type.",
+            "- Split the mission into product sections.",
+            "- Create one task per visible feature or verifiable deliverable.",
+            "- Assign each task to the best existing agent before proposing a temporary specialist.",
+            "- Include required skills, dependencies, and expected artifact for each task.",
+          ].join("\n"),
+          category: "planning",
+          source: "system",
+          trustLevel: "markdown_only",
+          fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+        },
+      ],
+      instructions: "Plan by mission-specific sections and features. Reuse existing agents and skills before creating temporary specialists.",
       taskScope: "Understand the mission, reuse existing profiles first, and produce a concrete execution plan.",
       successCriteria: [
         "Tasks are specific and independently reviewable.",
@@ -27,6 +52,31 @@ export function createDefaultAgentProfiles(): AgentProfile[] {
       name: "Builder",
       description: "Produces real artifacts for the planned mission tasks.",
       skills: ["artifact generation", "software implementation", "structured output"],
+      skillIds: ["system-artifact-generation"],
+      skillDetails: [
+        {
+          id: "system-artifact-generation",
+          name: "Artifact Generation",
+          description: "Create complete, usable artifacts from assigned feature tasks without placeholder output.",
+          markdown: [
+            "# Artifact Generation",
+            "",
+            "Use this skill when the mission requires a real deliverable.",
+            "",
+            "## Procedure",
+            "- Follow the planner-selected artifact kind and required skills.",
+            "- Return named fenced code blocks for every generated file.",
+            "- For software, produce directly runnable HTML or project files.",
+            "- For documents, decks, spreadsheets, research, or automation, produce the matching file format.",
+            "- Do not produce a planning page when the user asked for an artifact.",
+          ].join("\n"),
+          category: "build",
+          source: "system",
+          trustLevel: "markdown_only",
+          fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+        },
+      ],
+      instructions: "Build the requested artifact directly. Prefer complete runnable output over explanations.",
       taskScope: "Build the requested artifact from the planner task list without using placeholders.",
       successCriteria: [
         "Generated artifacts are complete and runnable when the mission asks for software.",
@@ -41,6 +91,30 @@ export function createDefaultAgentProfiles(): AgentProfile[] {
       name: "Reviewer",
       description: "Checks whether the artifacts satisfy the mission and requests repairs when needed.",
       skills: ["quality review", "bug detection", "requirements checking"],
+      skillIds: ["system-artifact-review"],
+      skillDetails: [
+        {
+          id: "system-artifact-review",
+          name: "Artifact Review",
+          description: "Check generated output against the original mission and request scoped repairs.",
+          markdown: [
+            "# Artifact Review",
+            "",
+            "Use this skill after artifacts have been generated.",
+            "",
+            "## Procedure",
+            "- Compare the artifact to the original mission.",
+            "- Check completeness, obvious bugs, usability, and missing required behavior.",
+            "- Return only concrete required fixes.",
+            "- Pass the artifact when remaining concerns are optional polish.",
+          ].join("\n"),
+          category: "quality",
+          source: "system",
+          trustLevel: "markdown_only",
+          fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+        },
+      ],
+      instructions: "Review against the user's mission, not generic preferences. Ask for repair only when required.",
       taskScope: "Review the builder output against the original mission and identify required fixes.",
       successCriteria: [
         "The review states whether the mission is satisfied.",
@@ -132,6 +206,9 @@ function normalizeAgentProfile(agent: AgentProfile): AgentProfile {
     name: agent.name.trim() || id,
     description: agent.description.trim(),
     skills: agent.skills.map((skill) => skill.trim()).filter(Boolean),
+    skillIds: normalizeStringList(agent.skillIds),
+    skillDetails: normalizeAgentSkills(agent.skillDetails),
+    instructions: agent.instructions?.trim() || undefined,
     taskScope: agent.taskScope.trim(),
     successCriteria: agent.successCriteria
       .map((criterion) => criterion.trim())
@@ -165,6 +242,11 @@ function isAgentProfile(value: unknown): value is AgentProfile {
     typeof agent.description === "string" &&
     Array.isArray(agent.skills) &&
     agent.skills.every((skill) => typeof skill === "string") &&
+    (agent.skillIds === undefined ||
+      (Array.isArray(agent.skillIds) && agent.skillIds.every((skill) => typeof skill === "string"))) &&
+    (agent.skillDetails === undefined ||
+      (Array.isArray(agent.skillDetails) && agent.skillDetails.every(isAgentSkill))) &&
+    (agent.instructions === undefined || typeof agent.instructions === "string") &&
     typeof agent.taskScope === "string" &&
     Array.isArray(agent.successCriteria) &&
     agent.successCriteria.every((criterion) => typeof criterion === "string") &&
@@ -181,6 +263,61 @@ function isAgentProfile(value: unknown): value is AgentProfile {
     (agent.originUrl === undefined || typeof agent.originUrl === "string") &&
     (agent.license === undefined || typeof agent.license === "string") &&
     (agent.installedAt === undefined || typeof agent.installedAt === "string")
+  );
+}
+
+function normalizeStringList(value: string[] | undefined): string[] | undefined {
+  const normalized = value?.map((item) => item.trim()).filter(Boolean);
+  return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeAgentSkills(skills: AgentProfile["skillDetails"]): AgentProfile["skillDetails"] {
+  const normalized = skills
+    ?.map((skill) => ({
+      ...skill,
+      id: slugify(skill.id || skill.name),
+      name: skill.name.trim(),
+      description: skill.description.trim(),
+      markdown: skill.markdown.trim(),
+      category: skill.category?.trim() || undefined,
+      originUrl: skill.originUrl?.trim() || undefined,
+      fileInventory: skill.fileInventory?.filter((entry) => entry.path.trim()),
+    }))
+    .filter((skill) => skill.name && skill.description && skill.markdown);
+
+  return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+function isAgentSkill(value: unknown): value is NonNullable<AgentProfile["skillDetails"]>[number] {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const skill = value as Record<string, unknown>;
+  return (
+    typeof skill.id === "string" &&
+    typeof skill.name === "string" &&
+    typeof skill.description === "string" &&
+    typeof skill.markdown === "string" &&
+    (skill.category === undefined || typeof skill.category === "string") &&
+    (skill.source === undefined ||
+      skill.source === "system" ||
+      skill.source === "market" ||
+      skill.source === "user") &&
+    (skill.originUrl === undefined || typeof skill.originUrl === "string") &&
+    (skill.trustLevel === undefined ||
+      skill.trustLevel === "markdown_only" ||
+      skill.trustLevel === "assets" ||
+      skill.trustLevel === "scripts_executables") &&
+    (skill.fileInventory === undefined ||
+      (Array.isArray(skill.fileInventory) &&
+        skill.fileInventory.every(
+          (entry) =>
+            entry &&
+            typeof entry === "object" &&
+            typeof (entry as Record<string, unknown>).path === "string" &&
+            typeof (entry as Record<string, unknown>).kind === "string",
+        )))
   );
 }
 

@@ -3,6 +3,7 @@ import { tool } from "langchain";
 import { z } from "zod";
 import type { SubAgent } from "deepagents";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import type { BaseLanguageModel } from "@langchain/core/language_models/base";
 
 import { createDefaultAgentProfiles } from "./agent-registry";
 
@@ -27,6 +28,9 @@ export type AgentProfile = {
   name: string;
   description: string;
   skills: string[];
+  skillIds?: string[];
+  skillDetails?: AgentSkill[];
+  instructions?: string;
   taskScope: string;
   successCriteria: string[];
   temporary: boolean;
@@ -40,6 +44,28 @@ export type AgentProfile = {
   installedAt?: string;
 };
 
+export type AgentSkill = {
+  id: string;
+  name: string;
+  description: string;
+  markdown: string;
+  category?: string;
+  source?: "system" | "market" | "user";
+  originUrl?: string;
+  trustLevel?: "markdown_only" | "assets" | "scripts_executables";
+  fileInventory?: Array<{
+    path: string;
+    kind: "skill" | "markdown" | "reference" | "script" | "asset" | "other";
+  }>;
+};
+
+type DeepAgentSkillFile = {
+  path: string;
+  content: string[];
+  created_at: string;
+  modified_at: string;
+};
+
 export type MissionTask = {
   id: string;
   title: string;
@@ -51,6 +77,7 @@ export type MissionTask = {
   goal?: string;
   assignedAgentId?: string;
   requiredSkills?: string[];
+  requiredSkillIds?: string[];
   dependencies?: string[];
   expectedArtifact?: string;
 };
@@ -138,6 +165,8 @@ export type MissionChatModel = {
   invoke(messages: Array<{ role: string; content: string }>): Promise<{ content: unknown }>;
 };
 
+type MissionDeepAgentModel = MissionChatModel | BaseLanguageModel;
+
 export type MissionProgressStage =
   | "planning"
   | "building"
@@ -148,6 +177,12 @@ export type MissionProgressStage =
 export type MissionProgressUpdate = {
   stage: MissionProgressStage;
   preview: MissionPreview;
+};
+
+export const __missionRuntimeTestUtils = {
+  createDeepAgentSkillFiles,
+  ensureSkillFrontmatter,
+  normalizeDeepAgentSkillName,
 };
 
 function appendRuntimeEvent(
@@ -300,7 +335,10 @@ export function buildMissionPreview(
   };
 }
 
-export function createMetaAgentDefinition(registry: Capability[]): MetaAgentDefinition {
+export function createMetaAgentDefinition(
+  registry: Capability[],
+  agentProfiles = createDefaultAgentProfiles(),
+): MetaAgentDefinition {
   const searchCapabilities = tool(
     ({ query }) =>
       JSON.stringify(
@@ -355,38 +393,145 @@ export function createMetaAgentDefinition(registry: Capability[]): MetaAgentDefi
     description: "Searches for existing information and summarizes cited findings.",
     systemPrompt: "You are a focused research agent. Reuse available tools before reasoning from memory.",
     tools: [searchCapabilities],
+    skills: ["/skills/"],
   };
 
   const reviewer: SubAgent = {
     name: "reviewer",
     description: "Reviews plans and outputs for gaps, unsupported claims, and user fit.",
     systemPrompt: "You are a strict reviewer. Check whether each task output satisfies its success criteria.",
+    skills: ["/skills/"],
   };
+
+  const profileSubagents = agentProfiles.map(agentProfileToSubAgent);
 
   return {
     name: "meta-agent",
     systemPrompt:
-      "You are Meta Agent, a calm orchestrator. Understand the user's mission, search existing capabilities first, create temporary agents only for uncovered needs, assign scoped tasks, monitor progress, request revisions, and synthesize the final result in user-friendly language.",
+      [
+        "You are Meta Agent, a calm orchestrator.",
+        "Use the DeepAgents task tool to delegate substantial mission sections to available subagents.",
+        "Use write_todos for the mission plan, and read relevant SKILL.md files before executing specialized work.",
+        "Search existing capabilities and skills first, create temporary agents only for uncovered needs, assign scoped tasks, monitor progress, request revisions, and synthesize the final result in user-friendly language.",
+        "When producing artifacts, return named fenced code blocks for every generated file.",
+      ].join(" "),
     tools: [searchCapabilities, createEphemeral, assignTask].map((item) => ({
       name: item.name,
       description: item.description,
     })),
-    subagents: [researcher, reviewer],
+    subagents: [...profileSubagents, researcher, reviewer],
   };
 }
 
 export function createMetaDeepAgent(
   registry = createDefaultCapabilityRegistry(),
-  model?: BaseChatModel,
+  model?: BaseLanguageModel,
+  agentProfiles = createDefaultAgentProfiles(),
 ) {
-  const definition = createMetaAgentDefinition(registry);
+  const definition = createMetaAgentDefinition(registry, agentProfiles);
 
   return createDeepAgent({
     model,
     systemPrompt: definition.systemPrompt,
     tools: createMetaAgentTools(registry),
+    skills: ["/skills/"],
     subagents: definition.subagents,
   });
+}
+
+function agentProfileToSubAgent(agent: AgentProfile): SubAgent {
+  return {
+    name: agent.id,
+    description: [
+      agent.description,
+      agent.skills.length ? `Skills: ${agent.skills.join(", ")}` : "",
+    ]
+      .filter(Boolean)
+      .join(" "),
+    systemPrompt: formatAgentRuntimeContext(agent),
+    skills: ["/skills/"],
+  };
+}
+
+function createDeepAgentSkillFiles(agentProfiles: AgentProfile[]): Record<string, DeepAgentSkillFile> {
+  const now = new Date().toISOString();
+  const files: Record<string, DeepAgentSkillFile> = {};
+
+  for (const skill of collectAgentSkills(agentProfiles)) {
+    const slug = normalizeDeepAgentSkillName(skill.id || skill.name);
+    const content = ensureSkillFrontmatter(skill, slug);
+    files[`/skills/${slug}/SKILL.md`] = {
+      path: `/skills/${slug}/SKILL.md`,
+      content: content.split("\n"),
+      created_at: now,
+      modified_at: now,
+    };
+  }
+
+  return files;
+}
+
+function collectAgentSkills(agentProfiles: AgentProfile[]): AgentSkill[] {
+  const skillsById = new Map<string, AgentSkill>();
+  for (const agent of agentProfiles) {
+    for (const skill of agent.skillDetails ?? []) {
+      skillsById.set(skill.id, skill);
+    }
+  }
+
+  return [...skillsById.values()];
+}
+
+function ensureSkillFrontmatter(skill: AgentSkill, slug: string): string {
+  const body = skill.markdown.trim();
+  if (/^---\s*\n[\s\S]*?\n---\s*\n/.test(body)) {
+    return body.replace(/^---\s*\n([\s\S]*?)\n---/, (match, frontmatter: string) => {
+      const hasName = /^name:\s*/m.test(frontmatter);
+      const hasDescription = /^description:\s*/m.test(frontmatter);
+      if (hasName && hasDescription) {
+        return match;
+      }
+
+      return [
+        "---",
+        hasName ? "" : `name: ${slug}`,
+        hasDescription ? "" : `description: ${quoteYaml(skill.description)}`,
+        frontmatter,
+        "---",
+      ]
+        .filter((line) => line !== "")
+        .join("\n");
+    });
+  }
+
+  return [
+    "---",
+    `name: ${slug}`,
+    `description: ${quoteYaml(skill.description)}`,
+    skill.originUrl ? `metadata:\n  origin: ${quoteYaml(skill.originUrl)}` : "",
+    "---",
+    "",
+    body,
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+function normalizeDeepAgentSkillName(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64)
+    .replace(/-+$/g, "");
+
+  return normalized || "metaflow-skill";
+}
+
+function quoteYaml(value: string): string {
+  return JSON.stringify(value.trim());
 }
 
 export async function runMission(
@@ -414,6 +559,10 @@ export async function runMultiAgentMission(
       mode: "preview",
       provider,
     };
+  }
+
+  if (isDeepAgentCompatibleModel(model)) {
+    return runNativeDeepAgentMission(mission, provider, model, agentProfiles, onProgress);
   }
 
   const preview = buildMissionPreview(mission);
@@ -695,6 +844,233 @@ export async function runMultiAgentMission(
       provider,
     };
   }
+}
+
+async function runNativeDeepAgentMission(
+  mission: string,
+  provider: MissionPreview["provider"] | undefined,
+  model: BaseLanguageModel,
+  agentProfiles: AgentProfile[],
+  onProgress?: (update: MissionProgressUpdate) => void | Promise<void>,
+): Promise<MissionPreview> {
+  const preview = buildMissionPreview(mission);
+  let events = appendRuntimeEvent(
+    preview.events,
+    "task.started",
+    "Meta Agent started native DeepAgents execution with skill middleware.",
+  );
+  const skillFiles = createDeepAgentSkillFiles(agentProfiles);
+  const agent = createMetaDeepAgent(createDefaultCapabilityRegistry(), model, agentProfiles);
+
+  await onProgress?.({
+    stage: "planning",
+    preview: {
+      ...preview,
+      events,
+      finalBrief: "DeepAgents is planning with native todos, task delegation, and skill discovery.",
+      mode: "deepagents",
+      provider,
+    },
+  });
+
+  try {
+    const result = await agent.invoke({
+      messages: [
+        {
+          role: "user",
+          content: [
+            `Mission: ${mission}`,
+            "",
+            "Execute this mission end to end.",
+            "Use write_todos to plan.",
+            "Use available subagents through the task tool when work can be split.",
+            "Use the skills system: inspect available skills and read relevant SKILL.md files before specialized work.",
+            "Return final deliverables as named fenced code blocks. For web apps, include a runnable HTML file or React project files.",
+            "Also include a fenced JSON block named mission-run.json with finalBrief, runLogs, and tasks.",
+          ].join("\n"),
+        },
+      ],
+      files: skillFiles,
+    });
+    const output = extractDeepAgentOutput(result);
+    const artifacts = extractArtifactsFromText(output);
+    const report = extractRunReportFromText(output);
+    if (artifacts.length === 0) {
+      return runFallbackDirectMissionAfterNativeAttempt(
+        mission,
+        provider,
+        model,
+        agentProfiles,
+        preview,
+        events,
+        output,
+        onProgress,
+      );
+    }
+    const tasks =
+      report?.tasks && report.tasks.length > 0
+        ? completeAllTasks(createDynamicExecutionTasks(report.tasks, mission, agentProfiles))
+        : completeAllTasks(createDynamicExecutionTasks([], mission, agentProfiles));
+    const runLogs =
+      report?.runLogs && report.runLogs.length > 0
+        ? report.runLogs
+        : [
+            {
+              agent: "Meta Agent",
+              taskId: "native-deepagents",
+              level: artifacts.length > 0 ? "info" : "warning",
+              message:
+                artifacts.length > 0
+                  ? `Native DeepAgents generated ${artifacts.length} artifact file(s).`
+                  : "Native DeepAgents completed without named artifact blocks.",
+            } satisfies MissionRunLog,
+          ];
+    const error =
+      artifacts.length > 0
+        ? undefined
+        : "Mission did not produce a usable artifact.";
+
+    events = appendRuntimeEvent(
+      events,
+      error ? "mission.failed" : "mission.ready",
+      error ?? "Native DeepAgents completed the mission.",
+    );
+
+    const finalPreview: MissionPreview = {
+      ...preview,
+      tasks,
+      events,
+      runLogs,
+      artifacts,
+      mode: "deepagents",
+      finalOutput: output,
+      error,
+      finalBrief:
+        report?.finalBrief ??
+        (artifacts.length > 0
+          ? "Native DeepAgents completed the mission with generated artifacts."
+          : "Native DeepAgents completed, but no artifact code blocks were found."),
+      provider,
+    };
+
+    await onProgress?.({
+      stage: error ? "done" : "done",
+      preview: finalPreview,
+    });
+
+    return finalPreview;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Native DeepAgents run failed.";
+    return {
+      ...preview,
+      artifacts: [],
+      events: appendRuntimeEvent(events, "mission.failed", message),
+      mode: "preview",
+      error: message,
+      finalBrief: "Native DeepAgents failed before producing artifacts.",
+      provider,
+    };
+  }
+}
+
+async function runFallbackDirectMissionAfterNativeAttempt(
+  mission: string,
+  provider: MissionPreview["provider"] | undefined,
+  model: MissionChatModel,
+  agentProfiles: AgentProfile[],
+  preview: MissionPreview,
+  nativeEvents: MissionEvent[],
+  nativeOutput: string,
+  onProgress?: (update: MissionProgressUpdate) => void | Promise<void>,
+): Promise<MissionPreview> {
+  let events = appendRuntimeEvent(
+    nativeEvents,
+    "task.started",
+    "Native DeepAgents produced no artifact blocks; falling back to direct artifact builder.",
+  );
+  const builder = findAgent(agentProfiles, "builder");
+  const reviewer = findAgent(agentProfiles, "reviewer");
+  const tasks = createDynamicExecutionTasks([], mission, agentProfiles);
+  const buildingTasks = markTasksRunning(
+    tasks,
+    selectImplementationTaskIds(tasks, selectArtifactTask(tasks).id),
+  );
+
+  await onProgress?.({
+    stage: "building",
+    preview: {
+      ...preview,
+      tasks: buildingTasks,
+      events,
+      finalBrief: "Direct builder is generating artifacts after native DeepAgents produced no artifact.",
+      mode: "deepagents",
+      provider,
+      finalOutput: nativeOutput,
+    },
+  });
+
+  const builderOutput = await runBuilderAgent(mission, buildingTasks, builder, model, {
+    artifactKind: "web_app",
+    requiredSkills: ["artifact generation", "software implementation"],
+    selectedCapabilityIds: ["app-builder"],
+  });
+  const artifacts = extractArtifactsFromText(builderOutput);
+  const afterBuildTasks = markTasksDone(
+    tasks,
+    selectImplementationTaskIds(tasks, selectArtifactTask(tasks).id),
+  );
+  const review = await runReviewerAgentSafely(
+    mission,
+    afterBuildTasks,
+    artifacts,
+    reviewer,
+    model,
+  );
+  const error = artifacts.length > 0 ? undefined : "Mission did not produce a usable artifact.";
+  events = appendRuntimeEvent(
+    events,
+    error ? "mission.failed" : "mission.ready",
+    error ?? "Fallback builder produced usable artifacts.",
+  );
+
+  return {
+    ...preview,
+    tasks: completeAllTasks(afterBuildTasks),
+    events,
+    runLogs: [
+      {
+        agent: "Meta Agent",
+        taskId: "native-deepagents",
+        level: "warning",
+        message: "Native DeepAgents completed without named artifact blocks.",
+      },
+      {
+        agent: builder.name,
+        taskId: "fallback-build",
+        level: artifacts.length > 0 ? "info" : "error",
+        message:
+          artifacts.length > 0
+            ? `Fallback builder generated ${artifacts.length} artifact file(s).`
+            : "Fallback builder returned no artifact blocks.",
+      },
+      {
+        agent: reviewer.name,
+        taskId: "fallback-review",
+        level: review.passed ? "info" : "warning",
+        message: review.summary,
+      },
+    ],
+    artifacts,
+    mode: "deepagents",
+    finalOutput: [nativeOutput, builderOutput, formatReviewOutput(review)].join("\n\n"),
+    error,
+    finalBrief:
+      artifacts.length > 0
+        ? "Native DeepAgents handled planning and skill discovery; fallback builder produced the artifact."
+        : "Native DeepAgents and fallback builder completed, but no artifact code blocks were found.",
+    provider,
+  };
 }
 
 export async function runMissionIteration(
@@ -1054,7 +1430,7 @@ async function runPlannerAgent(
       content: [
         "You are the Planner agent in a MetaFlow multi-agent run.",
         agent.description,
-        `Skills: ${agent.skills.join(", ")}`,
+        formatAgentRuntimeContext(agent),
         "First search/reuse existing capabilities and skills from the registry. Do not guess from hardcoded categories.",
         "Return only a fenced JSON block named planner-output.json.",
         "Shape: {\"finalBrief\": string, \"artifactKind\": string, \"requiredSkills\": string[], \"selectedCapabilityIds\": string[], \"tasks\": [{\"id\": string, \"section\": string, \"feature\": string, \"title\": string, \"description\": string, \"assignedTo\": string, \"assignedAgentId\": string, \"requiredSkills\": string[], \"dependencies\": string[], \"expectedArtifact\": string, \"status\": \"queued\" | \"running\" | \"reviewing\" | \"done\"}]}",
@@ -1118,6 +1494,7 @@ async function runBuilderAgent(
         `Planner artifactKind: ${plan.artifactKind ?? "unspecified"}`,
         `Planner requiredSkills: ${(plan.requiredSkills ?? []).join(", ") || "none"}`,
         `Planner selectedCapabilityIds: ${(plan.selectedCapabilityIds ?? []).join(", ") || "none"}`,
+        formatAgentRuntimeContext(agent),
         "Generate real artifacts only. Never use placeholders.",
         "Return named fenced code blocks for every file you create.",
         "Follow the planner artifactKind and requiredSkills. Do not re-classify the mission from keywords.",
@@ -1176,7 +1553,7 @@ async function runIterationBuilderAgent(
         `Planner artifactKind: ${plan.artifactKind ?? "unspecified"}`,
         `Planner requiredSkills: ${(plan.requiredSkills ?? []).join(", ") || "none"}`,
         `Planner selectedCapabilityIds: ${(plan.selectedCapabilityIds ?? []).join(", ") || "none"}`,
-        agent.description,
+        formatAgentRuntimeContext(agent),
         "Return named fenced code blocks for every changed or new file.",
         "Follow the planner artifactKind and requiredSkills. Do not re-classify the mission from keywords.",
         "Preserve existing behavior unless the follow-up asks to change it.",
@@ -1230,7 +1607,7 @@ async function runReviewerAgent(
       content: [
         "You are the Reviewer agent in a MetaFlow multi-agent run.",
         agent.description,
-        `Skills: ${agent.skills.join(", ")}`,
+        formatAgentRuntimeContext(agent),
         "Return only a fenced JSON block named review.json.",
         "Shape: {\"passed\": boolean, \"issues\": string[], \"requiredFixes\": string[], \"summary\": string}",
       ].join("\n"),
@@ -1295,7 +1672,7 @@ async function runRepairAgent(
       content: [
         "You are Builder.",
         "Repair the artifact according to reviewer feedback.",
-        agent.description,
+        formatAgentRuntimeContext(agent),
         "Return exactly one complete replacement file in a named fenced code block.",
         "Implement the user's requested app directly.",
         "Do not build a requirements clarification page, task planner, proposal, or explanation page.",
@@ -1517,6 +1894,39 @@ function formatTasksForPrompt(tasks: MissionTask[]): string {
   );
 }
 
+function formatAgentRuntimeContext(agent: AgentProfile): string {
+  const skillDetails = agent.skillDetails ?? [];
+  return [
+    `Agent: ${agent.name}`,
+    `Description: ${agent.description}`,
+    agent.instructions ? `Instructions:\n${agent.instructions}` : "",
+    `Skill labels: ${agent.skills.join(", ") || "none"}`,
+    skillDetails.length
+      ? [
+          "Installed skill documents:",
+          ...skillDetails.map((skill) =>
+            [
+              `## ${skill.name} (${skill.id})`,
+              skill.description,
+              summarizeMarkdown(skill.markdown),
+            ].join("\n"),
+          ),
+        ].join("\n")
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function summarizeMarkdown(markdown: string): string {
+  const trimmed = markdown.trim();
+  if (trimmed.length <= 1200) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, 1200).trim()}\n...`;
+}
+
 function formatReviewOutput(review: MissionReview): string {
   return [
     "```json filename=\"review.json\"",
@@ -1635,6 +2045,9 @@ function isMissionTask(value: unknown): value is MissionTask {
     (task.requiredSkills === undefined ||
       (Array.isArray(task.requiredSkills) &&
         task.requiredSkills.every((skill) => typeof skill === "string"))) &&
+    (task.requiredSkillIds === undefined ||
+      (Array.isArray(task.requiredSkillIds) &&
+        task.requiredSkillIds.every((skill) => typeof skill === "string"))) &&
     (task.dependencies === undefined ||
       (Array.isArray(task.dependencies) &&
         task.dependencies.every((dependency) => typeof dependency === "string"))) &&
@@ -1687,6 +2100,34 @@ function extractMessageContent(content: unknown): string {
   }
 
   return content ? JSON.stringify(content) : "";
+}
+
+function extractDeepAgentOutput(result: unknown): string {
+  if (!result || typeof result !== "object") {
+    return typeof result === "string" ? result : "";
+  }
+
+  const value = result as Record<string, unknown>;
+  const messages = Array.isArray(value.messages) ? value.messages : [];
+  const textParts = messages
+    .map((message) => {
+      if (!message || typeof message !== "object") {
+        return "";
+      }
+
+      return extractMessageContent((message as Record<string, unknown>).content);
+    })
+    .filter(Boolean);
+
+  return textParts.length > 0 ? textParts.join("\n\n") : extractMessageContent(value.content);
+}
+
+function isDeepAgentCompatibleModel(model: MissionDeepAgentModel): model is BaseLanguageModel {
+  const candidate = model as Record<string, unknown>;
+  return (
+    typeof candidate.bindTools === "function" ||
+    typeof candidate.withConfig === "function"
+  );
 }
 
 function createMetaAgentTools(registry: Capability[]) {
@@ -1892,6 +2333,10 @@ function normalizePlannedTask(
     section: task.section?.trim() || inferTaskSection(task),
     feature: task.feature?.trim() || inferTaskFeature(task),
     requiredSkills: task.requiredSkills?.filter(Boolean) ?? assignedAgent.skills.slice(0, 3),
+    requiredSkillIds:
+      task.requiredSkillIds?.filter(Boolean) ??
+      assignedAgent.skillIds?.slice(0, 3) ??
+      assignedAgent.skillDetails?.map((skill) => skill.id).slice(0, 3),
     dependencies: task.dependencies?.filter(Boolean) ?? [],
     expectedArtifact: task.expectedArtifact,
     status: "queued",

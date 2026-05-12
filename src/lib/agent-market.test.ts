@@ -16,6 +16,14 @@ describe("agent market", () => {
     });
     expect(agents[0]?.originUrl).toContain("github.com/msitarzewski/agency-agents");
     expect(agents[0]?.skills.length).toBeGreaterThan(0);
+    expect(agents[0]?.instructions).toContain("#");
+    expect(agents[0]?.skillDetails?.[0]).toMatchObject({
+      source: "market",
+      trustLevel: "markdown_only",
+    });
+    expect(agents[0]?.skillDetails).toHaveLength(1);
+    expect(agents[0]?.skillDetails?.[0]?.markdown).toContain("Imported directly");
+    expect(agents[0]?.skillDetails?.[0]?.markdown).toContain("Core Mission");
   });
 
   it("installs a market agent as a registry profile", () => {
@@ -32,5 +40,8 @@ describe("agent market", () => {
       temporary: false,
     });
     expect(installed?.installedAt).toBeTruthy();
+    expect(installed?.skillIds?.length).toBeGreaterThan(0);
+    expect(installed?.skillDetails?.[0]?.markdown).toContain("Frontend Developer");
+    expect(installed?.instructions).toContain("Frontend Developer Agent Personality");
   });
 });

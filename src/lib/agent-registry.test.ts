@@ -31,6 +31,9 @@ describe("agent registry", () => {
       expect.arrayContaining(["planner", "builder", "reviewer"]),
     );
     expect(agents.find((agent) => agent.id === "builder")?.skills).toContain("artifact generation");
+    expect(agents.find((agent) => agent.id === "builder")?.skillDetails?.[0]?.markdown).toContain(
+      "Artifact Generation",
+    );
   });
 
   it("persists added and edited agent profiles", async () => {
@@ -42,6 +45,19 @@ describe("agent registry", () => {
       name: "Designer",
       description: "Shapes simple user-facing UI.",
       skills: ["interface design", "layout"],
+      skillIds: ["interface-design"],
+      skillDetails: [
+        {
+          id: "interface-design",
+          name: "Interface Design",
+          description: "Design simple interfaces.",
+          markdown: "# Interface Design\n\nKeep screens simple and usable.",
+          source: "user",
+          trustLevel: "markdown_only",
+          fileInventory: [{ path: "SKILL.md", kind: "skill" }],
+        },
+      ],
+      instructions: "Use the installed skill documents before editing UI.",
       taskScope: "Improve mission artifacts with a cleaner user experience.",
       successCriteria: ["Keep the UI simple.", "Avoid noisy controls."],
       temporary: false,
@@ -56,6 +72,8 @@ describe("agent registry", () => {
     const designer = await reloaded.get("designer");
 
     expect(designer?.skills).toContain("visual review");
+    expect(designer?.skillDetails?.[0]?.markdown).toContain("Keep screens simple");
+    expect(designer?.instructions).toContain("installed skill documents");
     expect((await reloaded.list()).length).toBe(createDefaultAgentProfiles().length + 1);
   });
 });
