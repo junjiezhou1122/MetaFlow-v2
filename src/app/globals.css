@@ -1,0 +1,1106 @@
+:root {
+  --background: #f7f6f1;
+  --surface: #fffefa;
+  --ink: #090909;
+  --muted: #706d66;
+  --line: #c8c4ba;
+  --line-strong: #9e9a91;
+  --accent: #3f3cff;
+  --accent-soft: #a9a4f5;
+  --accent-pale: #dedcf8;
+  --success: #1e7f58;
+  --danger: #b73838;
+  --page-title-size: 48px;
+  --section-title-size: 24px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100vh;
+}
+
+body {
+  background: var(--background);
+  color: var(--ink);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  margin: 0;
+}
+
+button,
+textarea,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.appShell {
+  display: grid;
+  grid-template-columns: 224px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  border-right: 1px solid var(--line);
+  padding: 28px 24px;
+}
+
+.brandBlock,
+.navItem,
+.pageHeader p,
+.panelHeader,
+.missionComposer,
+.settingsPanel,
+.settingsTitle,
+.settingsActions,
+.missionDetailTopbar,
+.missionListItem span,
+.missionListItem small,
+.artifactItem small,
+.taskCard span,
+.taskCard small,
+.taskSkillRow em,
+.agentCard span,
+.agentCard small,
+.evidenceItem span,
+.evidenceItem strong,
+.runLogItem span,
+.runLogItem small,
+.runLogItem strong,
+.emptyState {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.brandBlock {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 36px;
+}
+
+.brandBlock span {
+  color: var(--muted);
+  letter-spacing: 0.06em;
+}
+
+.brandBlock b {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.navList {
+  display: grid;
+  gap: 12px;
+}
+
+.navItem {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-size: 16px;
+  padding: 0;
+  text-align: left;
+  text-decoration: none;
+}
+
+.navItem.active {
+  color: var(--accent);
+}
+
+.mainSurface {
+  overflow: hidden;
+  padding: 28px;
+  position: relative;
+}
+
+.mainSurface::before,
+.mainSurface::after {
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.mainSurface::before {
+  animation: gridDrift 18s linear infinite;
+  background-image:
+    linear-gradient(rgb(63 60 255 / 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(63 60 255 / 0.05) 1px, transparent 1px);
+  background-size: 42px 42px;
+  opacity: 0.55;
+}
+
+.mainSurface::after {
+  animation: scanSweep 7s ease-in-out infinite;
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    transparent 44%,
+    rgb(63 60 255 / 0.05) 50%,
+    transparent 56%,
+    transparent 100%
+  );
+  transform: translateX(-60%);
+}
+
+.mainSurface > * {
+  position: relative;
+  z-index: 1;
+}
+
+.pageStack {
+  display: grid;
+  gap: 16px;
+}
+
+.pageHeader,
+.missionComposer,
+.settingsPanel,
+.focusPanel,
+.boardPanel {
+  background: color-mix(in srgb, var(--surface) 72%, var(--background));
+  border: 1px solid var(--line);
+}
+
+.pageHeader {
+  padding: 22px 24px;
+}
+
+.pageHeader p {
+  color: var(--accent);
+  margin: 0 0 12px;
+}
+
+.pageHeader h1 {
+  font-size: var(--page-title-size);
+  font-weight: 400;
+  line-height: 1.04;
+  margin: 0;
+  max-width: 980px;
+}
+
+.pageHeader span {
+  color: #252522;
+  display: block;
+  font-size: 17px;
+  line-height: 1.45;
+  margin-top: 12px;
+  max-width: 820px;
+}
+
+.missionComposer,
+.settingsPanel {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.missionComposer {
+  background: rgb(255 254 250 / 0.9);
+  border-color: #dedbd2;
+  border-radius: 30px;
+  box-shadow: 0 18px 60px rgb(9 9 9 / 0.08);
+  padding: 18px 22px 12px;
+}
+
+.missionOnly {
+  width: min(920px, 72vw);
+}
+
+.missionCenter {
+  align-content: center;
+  display: grid;
+  gap: 28px;
+  justify-content: center;
+  min-height: calc(100vh - 56px);
+  padding-bottom: 8vh;
+}
+
+.missionHeroCopy {
+  text-align: center;
+  width: min(920px, 72vw);
+}
+
+.missionHeroCopy span {
+  color: var(--accent);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
+.missionHeroCopy h1 {
+  animation: titleFloat 5s ease-in-out infinite;
+  font-size: 42px;
+  font-weight: 400;
+  line-height: 1;
+  margin: 10px 0 0;
+  text-shadow: 0 16px 50px rgb(63 60 255 / 0.12);
+}
+
+.settingsCenter {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-height: calc(100vh - 56px);
+}
+
+.settingsCenter .settingsPanel {
+  width: min(760px, 100%);
+}
+
+.agentsCenter {
+  min-height: calc(100vh - 56px);
+  padding: 12px 18px;
+}
+
+.agentsCenter .agentPanel {
+  margin: 0 auto;
+  width: min(1240px, 100%);
+}
+
+.settingsTitle {
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 18px;
+  padding-bottom: 12px;
+}
+
+.settingsActions {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  padding-top: 2px;
+}
+
+.settingsActions span {
+  color: var(--success);
+  font-size: 13px;
+}
+
+.settingsActions button {
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  color: var(--surface);
+  min-height: 44px;
+  min-width: 120px;
+  padding: 0 18px;
+}
+
+.settingsDivider {
+  border-top: 1px solid var(--line);
+  margin: 10px 0 2px;
+}
+
+.agentRegistryHeader {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.agentRegistryHeader div {
+  display: grid;
+  gap: 4px;
+}
+
+.agentRegistryHeader strong {
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.agentRegistryHeader span {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+}
+
+.agentEditorGrid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 340px 1fr;
+}
+
+.agentProfileList,
+.agentEditor {
+  display: grid;
+  gap: 10px;
+}
+
+.agentProfileList {
+  align-content: start;
+}
+
+.agentProfileList button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  text-align: left;
+  min-height: 104px;
+}
+
+.agentProfileList button.selected {
+  border-color: var(--accent);
+}
+
+.agentProfileList strong {
+  font-weight: 500;
+}
+
+.agentProfileList span {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.agentEditor {
+  align-content: start;
+  grid-template-columns: 1fr;
+}
+
+.agentEditor textarea {
+  min-height: 230px;
+}
+
+.narrowStack {
+  max-width: 860px;
+}
+
+.compactHeader h1 {
+  font-size: 38px;
+}
+
+.missionSpace {
+  max-width: 1180px;
+}
+
+.missionSpaceHeader {
+  align-items: end;
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+}
+
+.missionSpaceHeader .secondaryAction {
+  flex: 0 0 auto;
+}
+
+.missionList {
+  background: rgb(255 254 250 / 0.72);
+  border: 1px solid var(--line);
+  display: grid;
+}
+
+.missionListItem {
+  align-items: center;
+  background: rgb(255 254 250 / 0.82);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 92px minmax(180px, 0.8fr) minmax(220px, 1fr) 150px;
+  min-height: 86px;
+  padding: 16px 18px;
+  text-align: left;
+}
+
+.missionListItem:last-child {
+  border-bottom: 0;
+}
+
+.missionListItem.active,
+.missionListItem:hover {
+  background: rgb(255 254 250 / 0.96);
+}
+
+.missionListItem span {
+  color: var(--accent);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.missionListItem strong {
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.missionListItem small,
+.missionListItem p {
+  color: var(--muted);
+}
+
+.missionListItem p {
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  line-height: 1.45;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emptyMissionSpace {
+  align-items: center;
+  background: rgb(255 254 250 / 0.72);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+  min-height: 320px;
+  padding: 28px;
+}
+
+.emptyMissionSpace p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.missionDetailShell {
+  display: grid;
+  gap: 16px;
+}
+
+.missionDetailTopbar {
+  align-items: center;
+  background: rgb(255 254 250 / 0.78);
+  border: 1px solid var(--line);
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  padding: 14px;
+}
+
+.missionDetailTopbar div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.missionDetailTopbar span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.missionDetailTopbar strong {
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.missionDetailTabs {
+  background: var(--background);
+  border: 1px solid var(--line);
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 4px;
+}
+
+.missionDetailTabs button {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  min-height: 34px;
+  padding: 0 12px;
+}
+
+.missionDetailTabs button.selected {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.composerTopline {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  display: flex;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  gap: 16px;
+  justify-content: space-between;
+  padding-bottom: 12px;
+}
+
+.composerTopline button,
+.secondaryAction {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  min-height: 42px;
+  padding: 0 14px;
+}
+
+.missionComposer label,
+.settingsPanel label {
+  color: var(--muted);
+  display: grid;
+  gap: 10px;
+}
+
+.missionInputLabel textarea {
+  background: transparent;
+  border: 0;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-size: 20px;
+  line-height: 1.45;
+  min-height: 72px;
+  padding: 8px 2px;
+  resize: none;
+}
+
+.missionInputLabel textarea::placeholder {
+  color: #aaa69c;
+}
+
+.missionInputLabel textarea:focus {
+  border: 0;
+  outline: 0;
+}
+
+.missionComposerToolbar {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+textarea,
+input {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  line-height: 1.5;
+  min-width: 0;
+  padding: 12px;
+}
+
+textarea {
+  min-height: 138px;
+  resize: vertical;
+}
+
+input {
+  min-height: 42px;
+}
+
+textarea:focus,
+input:focus {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent-pale);
+}
+
+.inlineActions,
+.providerToggle {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.missionOnly .inlineActions {
+  grid-template-columns: 1fr;
+}
+
+.missionComposer button,
+.providerToggle button,
+.starterStrip button {
+  border: 1px solid var(--accent);
+  min-height: 46px;
+}
+
+.missionComposer button:first-child {
+  background: #202020;
+  border-color: #202020;
+  border-radius: 999px;
+  color: white;
+  font-size: 22px;
+  min-height: 40px;
+  min-width: 40px;
+}
+
+.missionComposer button:last-child,
+.providerToggle button,
+.starterStrip button {
+  background: transparent;
+  color: var(--accent);
+}
+
+.providerToggle button.selected {
+  background: var(--accent);
+  color: white;
+}
+
+.settingsPanel p {
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.error {
+  color: var(--danger);
+  margin: 0;
+}
+
+.starterStrip {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: 860px;
+}
+
+.starterStrip button {
+  min-height: 62px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.focusPanel,
+.boardPanel {
+  padding: 18px;
+}
+
+.panelHeader {
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding-bottom: 12px;
+}
+
+.panelHeader b {
+  color: var(--accent);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.focusPanel strong {
+  display: block;
+  font-size: var(--section-title-size);
+  font-weight: 400;
+  margin-top: 16px;
+}
+
+.focusPanel p {
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+.errorPanel {
+  border-color: rgb(183 56 56 / 0.45);
+}
+
+.errorPanel .panelHeader b,
+.errorPanel strong {
+  color: var(--danger);
+}
+
+.overviewGrid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+}
+
+.agentGrid,
+.artifactList,
+.eventList,
+.runLogList {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.artifactPanel {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.artifactPanel .artifactList {
+  margin-top: 0;
+}
+
+.artifactRunActions {
+  align-items: center;
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+  min-height: 36px;
+}
+
+.artifactRunActions span {
+  color: var(--success);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  margin-right: 12px;
+}
+
+.artifactRunActions button {
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  color: var(--surface);
+  min-height: 36px;
+  padding: 0 14px;
+}
+
+.artifactItem {
+  background: rgb(255 254 250 / 0.84);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.artifactItem > div {
+  display: grid;
+  gap: 6px;
+}
+
+.artifactMeta {
+  align-items: start;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.artifactActions {
+  display: flex;
+  gap: 8px;
+}
+
+.artifactActions button {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.artifactActions button.selected {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--surface);
+}
+
+.artifactPreview {
+  background: white;
+  border: 1px solid var(--line);
+  height: min(74vh, 780px);
+  min-height: 560px;
+  width: 100%;
+}
+
+.artifactItem strong {
+  font-weight: 500;
+  margin-top: 0;
+}
+
+.artifactItem small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.artifactItem pre {
+  background: #111;
+  color: #f7f6f1;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 14px;
+  white-space: pre-wrap;
+}
+
+.followUpComposer {
+  align-items: end;
+  background: rgb(255 254 250 / 0.9);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr auto;
+  padding: 10px;
+}
+
+.followUpComposer textarea {
+  border: 0;
+  min-height: 58px;
+  resize: none;
+}
+
+.followUpComposer textarea:focus {
+  outline: 0;
+}
+
+.followUpComposer button {
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  border-radius: 999px;
+  color: var(--surface);
+  font-size: 22px;
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.followUpComposer button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.followUpComposer .error {
+  grid-column: 1 / -1;
+}
+
+.appLibrary {
+  max-width: 100%;
+}
+
+.libraryGrid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 280px 1fr;
+}
+
+.savedAppList {
+  align-content: start;
+  display: grid;
+  gap: 10px;
+}
+
+.savedAppList button {
+  background: rgb(255 254 250 / 0.82);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  display: grid;
+  gap: 8px;
+  min-height: 104px;
+  padding: 14px;
+  text-align: left;
+}
+
+.savedAppList button.selected,
+.savedAppList button:hover {
+  border-color: var(--accent);
+}
+
+.savedAppList strong {
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.savedAppList span,
+.savedAppList small {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.agentCard,
+.taskCard,
+.evidenceItem,
+.runLogItem {
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.agentCard strong,
+.taskCard strong {
+  font-weight: 500;
+}
+
+.taskCard span,
+.taskCard small,
+.agentCard span,
+.agentCard small,
+.evidenceItem span,
+.runLogItem span,
+.runLogItem small,
+.runLogItem p,
+.emptyState {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.taskLanes {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin-top: 18px;
+}
+
+.taskLane {
+  border-left: 1px solid var(--line);
+  min-height: 120px;
+  padding-left: 12px;
+}
+
+.taskLane h2 {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 400;
+  margin: 0 0 12px;
+}
+
+.taskSkillRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.taskSkillRow em {
+  border: 1px solid var(--line);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1;
+  padding: 5px 7px;
+}
+
+.evidenceItem strong {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.runLogItem strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.runLogItem p {
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.emptyState {
+  line-height: 1.5;
+  margin: 18px 0 0;
+}
+
+@media (max-width: 980px) {
+  .appShell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-bottom: 1px solid var(--line);
+    border-right: 0;
+  }
+
+  .navList,
+  .starterStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .navList {
+    display: flex;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 720px) {
+  .mainSurface,
+  .sidebar {
+    padding: 20px;
+  }
+
+  .pageHeader h1 {
+    font-size: 34px;
+  }
+
+  .missionOnly,
+  .missionHeroCopy {
+    width: min(100%, 640px);
+  }
+
+  .missionSpaceHeader,
+  .missionDetailTopbar {
+    align-items: stretch;
+    display: grid;
+  }
+
+  .missionListItem {
+    align-items: start;
+    gap: 8px;
+    grid-template-columns: 1fr;
+  }
+
+  .missionDetailTabs {
+    overflow-x: auto;
+  }
+
+  .overviewGrid,
+  .inlineActions,
+  .agentEditorGrid,
+  .libraryGrid,
+  .providerToggle,
+  .starterStrip {
+    grid-template-columns: 1fr;
+  }
+
+  .artifactMeta,
+  .agentRegistryHeader,
+  .followUpComposer {
+    align-items: stretch;
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+}
+
+@keyframes gridDrift {
+  from {
+    background-position: 0 0, 0 0;
+  }
+
+  to {
+    background-position: 42px 42px, 42px 42px;
+  }
+}
+
+@keyframes scanSweep {
+  0%,
+  42% {
+    transform: translateX(-70%);
+  }
+
+  100% {
+    transform: translateX(70%);
+  }
+}
+
+@keyframes titleFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-4px);
+  }
+}
