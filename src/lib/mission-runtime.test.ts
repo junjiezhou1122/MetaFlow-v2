@@ -380,6 +380,7 @@ describe("mission runtime", () => {
   });
 
   it("expands coarse software plans into section and feature-level tasks", async () => {
+    const runningFeatureCounts: number[] = [];
     const model = {
       invoke: async (messages: Array<{ role: string; content: string }>) => {
         const prompt = messages.map((message) => message.content).join("\n");
@@ -433,15 +434,30 @@ describe("mission runtime", () => {
       undefined,
       model as never,
       createDefaultAgentProfiles(),
+      async (update) => {
+        if (update.stage === "building") {
+          runningFeatureCounts.push(
+            update.preview.tasks.filter((task) => task.status === "running").length,
+          );
+        }
+      },
     );
 
-    expect(preview.tasks.length).toBeGreaterThanOrEqual(5);
+    expect(preview.tasks.length).toBeGreaterThanOrEqual(9);
     expect(preview.tasks.map((task) => task.section)).toEqual(
       expect.arrayContaining(["Workspace", "Projects", "Board", "Tasks", "Persistence"]),
     );
     expect(preview.tasks.map((task) => task.feature)).toEqual(
-      expect.arrayContaining(["Project list", "Kanban columns", "Task cards", "Saved state"]),
+      expect.arrayContaining([
+        "Project list",
+        "Kanban columns",
+        "Task creation",
+        "Task cards",
+        "Status movement",
+        "Saved state",
+      ]),
     );
+    expect(Math.max(...runningFeatureCounts)).toBeGreaterThanOrEqual(5);
     expect(preview.events.some((event) => event.message.includes("feature-level"))).toBe(true);
   });
 

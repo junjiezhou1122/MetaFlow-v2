@@ -466,12 +466,13 @@ export async function runMultiAgentMission(
     });
 
     const buildTask = selectArtifactTask(plannedTasks);
+    const buildTaskIds = selectImplementationTaskIds(plannedTasks, buildTask.id);
     events = appendRuntimeEvent(
       events,
       "task.started",
-      `${buildTask.assignedTo} started: ${buildTask.title}.`,
+      `${buildTask.assignedTo} started ${buildTaskIds.length} feature task(s).`,
     );
-    const buildingTasks = markTaskRunning(plannedTasks, buildTask.id);
+    const buildingTasks = markTasksRunning(plannedTasks, buildTaskIds);
     await onProgress?.({
       stage: "building",
       preview: {
@@ -496,7 +497,7 @@ export async function runMultiAgentMission(
     let artifacts = extractArtifactsFromText(builderOutput);
     runLogs.push({
       agent: builder.name,
-      taskId: buildTask.id,
+      taskId: buildTaskIds.join(","),
       level: artifacts.length > 0 ? "info" : "warning",
       message:
         artifacts.length > 0
@@ -506,9 +507,9 @@ export async function runMultiAgentMission(
     events = appendRuntimeEvent(
       events,
       "task.started",
-      `${buildTask.assignedTo} produced ${artifacts.length} artifact file(s).`,
+      `${buildTask.assignedTo} completed ${buildTaskIds.length} feature task(s) and produced ${artifacts.length} artifact file(s).`,
     );
-    const afterBuildTasks = markTaskDone(plannedTasks, buildTask.id);
+    const afterBuildTasks = markTasksDone(plannedTasks, buildTaskIds);
     const reviewTask = selectReviewTask(afterBuildTasks);
     const reviewingTasks = markTaskReviewing(afterBuildTasks, reviewTask.id);
     await onProgress?.({
@@ -781,11 +782,12 @@ export async function runMissionIteration(
     });
 
     const buildTask = selectArtifactTask(plannedTasks);
-    const buildingTasks = markTaskRunning(plannedTasks, buildTask.id);
+    const buildTaskIds = selectImplementationTaskIds(plannedTasks, buildTask.id);
+    const buildingTasks = markTasksRunning(plannedTasks, buildTaskIds);
     events = appendRuntimeEvent(
       events,
       "task.started",
-      `${buildTask.assignedTo} started: ${buildTask.title}.`,
+      `${buildTask.assignedTo} started ${buildTaskIds.length} feature task(s).`,
     );
     await onProgress?.({
       stage: "building",
@@ -815,7 +817,7 @@ export async function runMissionIteration(
     let artifacts = mergeArtifacts(existingArtifacts, extractArtifactsFromText(builderOutput));
     runLogs.push({
       agent: builder.name,
-      taskId: buildTask.id,
+      taskId: buildTaskIds.join(","),
       level: artifacts.length > 0 ? "info" : "warning",
       message:
         artifacts.length > 0
@@ -826,11 +828,11 @@ export async function runMissionIteration(
       events,
       artifacts.length > 0 ? "task.started" : "mission.failed",
       artifacts.length > 0
-        ? `${buildTask.assignedTo} updated ${artifacts.length} artifact file(s).`
+        ? `${buildTask.assignedTo} completed ${buildTaskIds.length} feature task(s) and updated ${artifacts.length} artifact file(s).`
         : "Builder returned no updated artifact blocks.",
     );
 
-    const afterBuildTasks = markTaskDone(plannedTasks, buildTask.id);
+    const afterBuildTasks = markTasksDone(plannedTasks, buildTaskIds);
     const reviewTask = selectReviewTask(afterBuildTasks);
     const reviewingTasks = markTaskReviewing(afterBuildTasks, reviewTask.id);
     events = appendRuntimeEvent(
@@ -1945,51 +1947,115 @@ function inferMissionSections(mission: string) {
     ];
 
     if (/project|项目/.test(normalized)) {
-      sections.push({
-        section: "Projects",
-        feature: "Project list",
-        taskTitle: "Plan project management",
-        taskDescription: "Define how projects are created, selected, and connected to tasks.",
-        assignedTo: "Product Planner",
-        assignedAgentId: "planner",
-        requiredSkills: ["product planning", "data modeling"],
-        expectedArtifact: "project feature design",
-      });
+      sections.push(
+        {
+          section: "Projects",
+          feature: "Project list",
+          taskTitle: "Build project list",
+          taskDescription: "Implement project options and the selected project state.",
+          assignedTo: "App Builder",
+          assignedAgentId: "builder",
+          requiredSkills: ["software implementation", "state management"],
+          expectedArtifact: "project selector",
+        },
+        {
+          section: "Projects",
+          feature: "Project assignment",
+          taskTitle: "Assign tasks to projects",
+          taskDescription: "Connect each task to the active project and show that relationship in the UI.",
+          assignedTo: "App Builder",
+          assignedAgentId: "builder",
+          requiredSkills: ["data modeling", "software implementation"],
+          expectedArtifact: "project-task data model",
+        },
+      );
     }
 
     if (/board|kanban|看板/.test(normalized)) {
-      sections.push({
-        section: "Board",
-        feature: "Kanban columns",
-        taskTitle: "Design board workflow",
-        taskDescription: "Define columns, movement, and task status behavior.",
-        assignedTo: "Interface Designer",
-        assignedAgentId: "designer",
-        requiredSkills: ["interface design", "workflow design"],
-        expectedArtifact: "board interaction model",
-      });
+      sections.push(
+        {
+          section: "Board",
+          feature: "Kanban columns",
+          taskTitle: "Create board columns",
+          taskDescription: "Implement visible Todo, Doing, and Done lanes with counts.",
+          assignedTo: "App Builder",
+          assignedAgentId: "builder",
+          requiredSkills: ["software implementation", "interface design"],
+          expectedArtifact: "board columns",
+        },
+        {
+          section: "Board",
+          feature: "Status movement",
+          taskTitle: "Move tasks between columns",
+          taskDescription: "Let users move each task between Todo, Doing, and Done states.",
+          assignedTo: "App Builder",
+          assignedAgentId: "builder",
+          requiredSkills: ["state management", "interaction design"],
+          expectedArtifact: "status transition controls",
+        },
+      );
     }
 
     sections.push(
       {
         section: "Tasks",
+        feature: "Task creation",
+        taskTitle: "Add new tasks",
+        taskDescription: "Implement the task input, validation, add action, and default status.",
+        assignedTo: "App Builder",
+        assignedAgentId: "builder",
+        requiredSkills: ["software implementation", "form handling"],
+        expectedArtifact: "task creation flow",
+      },
+      {
+        section: "Tasks",
         feature: "Task cards",
-        taskTitle: "Build task interactions",
-        taskDescription: "Implement creating, editing, completing, deleting, and rendering tasks.",
+        taskTitle: "Render task cards",
+        taskDescription: "Display each task with its title, project, date, and available actions.",
+        assignedTo: "App Builder",
+        assignedAgentId: "builder",
+        requiredSkills: ["software implementation", "interface design"],
+        expectedArtifact: "task card UI",
+      },
+      {
+        section: "Tasks",
+        feature: "Task editing",
+        taskTitle: "Edit task names",
+        taskDescription: "Allow users to change existing task names without losing status or project.",
         assignedTo: "App Builder",
         assignedAgentId: "builder",
         requiredSkills: ["software implementation", "state management"],
-        expectedArtifact: "task interaction code",
+        expectedArtifact: "task edit behavior",
+      },
+      {
+        section: "Tasks",
+        feature: "Task deletion",
+        taskTitle: "Delete tasks",
+        taskDescription: "Allow users to remove tasks and update lane counts immediately.",
+        assignedTo: "App Builder",
+        assignedAgentId: "builder",
+        requiredSkills: ["software implementation", "state management"],
+        expectedArtifact: "task delete behavior",
       },
       {
         section: "Persistence",
         feature: "Saved state",
         taskTitle: "Persist user data",
-        taskDescription: "Store user data locally so the generated tool remains useful after reload.",
+        taskDescription: "Store tasks, projects, and selected filters locally so the tool remains useful after reload.",
         assignedTo: "App Builder",
         assignedAgentId: "builder",
         requiredSkills: ["localStorage", "data persistence"],
         expectedArtifact: "persistent state code",
+      },
+      {
+        section: "Interface",
+        feature: "Empty states",
+        taskTitle: "Design empty and default states",
+        taskDescription: "Show useful empty column states and starter content so the app does not feel blank.",
+        assignedTo: "Interface Designer",
+        assignedAgentId: "designer",
+        requiredSkills: ["interface design", "user experience"],
+        expectedArtifact: "empty state UI",
       },
       {
         section: "Quality",
@@ -2117,6 +2183,25 @@ function selectReviewTask(tasks: MissionTask[]): MissionTask {
   );
 }
 
+function selectImplementationTaskIds(tasks: MissionTask[], fallbackId: string): string[] {
+  const ids = tasks
+    .filter((task) => isImplementationTask(task))
+    .map((task) => task.id);
+
+  return ids.length > 0 ? ids : [fallbackId];
+}
+
+function isImplementationTask(task: MissionTask): boolean {
+  if (isReviewTask(task)) {
+    return false;
+  }
+
+  const text = taskText(task);
+  return /builder|build|implement|code|app|web|react|html|software|localstorage|state|form|interface|interaction|render|delete|edit|create|move|assign|persist|生成|实现|构建|应用|网页|删除|编辑|新增|保存/.test(
+    text,
+  );
+}
+
 function isArtifactTask(task: MissionTask): boolean {
   const text = taskText(task);
   return /builder|build|implement|artifact|code|app|web|react|html|software|生成|实现|构建|应用|网页|产物/.test(
@@ -2144,16 +2229,30 @@ function taskText(task: MissionTask): string {
 }
 
 function markTaskRunning(tasks: MissionTask[], taskId: string): MissionTask[] {
-  return tasks.map((task) => ({
-    ...task,
-    status: task.id === taskId ? "running" : task.status === "running" ? "queued" : task.status,
-  }));
+  return markTasksRunning(tasks, [taskId]);
 }
 
 function markTaskDone(tasks: MissionTask[], taskId: string): MissionTask[] {
+  return markTasksDone(tasks, [taskId]);
+}
+
+function markTasksRunning(tasks: MissionTask[], taskIds: string[]): MissionTask[] {
+  const activeIds = new Set(taskIds);
   return tasks.map((task) => ({
     ...task,
-    status: task.id === taskId ? "done" : task.status,
+    status: activeIds.has(task.id)
+      ? "running"
+      : task.status === "running"
+        ? "queued"
+        : task.status,
+  }));
+}
+
+function markTasksDone(tasks: MissionTask[], taskIds: string[]): MissionTask[] {
+  const doneIds = new Set(taskIds);
+  return tasks.map((task) => ({
+    ...task,
+    status: doneIds.has(task.id) ? "done" : task.status,
   }));
 }
 
