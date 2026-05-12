@@ -379,6 +379,72 @@ describe("mission runtime", () => {
     expect(preview.artifacts?.[0]?.filename).toBe("index.html");
   });
 
+  it("expands coarse software plans into section and feature-level tasks", async () => {
+    const model = {
+      invoke: async (messages: Array<{ role: string; content: string }>) => {
+        const prompt = messages.map((message) => message.content).join("\n");
+        if (prompt.includes("Planner agent")) {
+          return {
+            content: [
+              "```json filename=\"planner-output.json\"",
+              JSON.stringify({
+                finalBrief: "Planner returned a coarse app plan.",
+                artifactKind: "web_app",
+                requiredSkills: ["software implementation"],
+                selectedCapabilityIds: ["app-builder"],
+                tasks: [
+                  {
+                    id: "build",
+                    title: "Build artifact",
+                    description: "Create the todo board app.",
+                    assignedTo: "Builder",
+                    status: "queued",
+                  },
+                  {
+                    id: "review",
+                    title: "Review artifact",
+                    description: "Review the todo board app.",
+                    assignedTo: "Reviewer",
+                    status: "queued",
+                  },
+                ],
+              }),
+              "```",
+            ].join("\n"),
+          };
+        }
+
+        if (prompt.includes("You are Builder.")) {
+          return {
+            content:
+              "```html filename=\"index.html\"\n<!doctype html><html><body><main><input><button>Add</button><section>Project</section><script>localStorage.setItem('todos','[]')</script></main></body></html>\n```",
+          };
+        }
+
+        return {
+          content:
+            "```json filename=\"review.json\"\n{\"passed\":true,\"issues\":[],\"requiredFixes\":[],\"summary\":\"OK\"}\n```",
+        };
+      },
+    };
+
+    const preview = await runMultiAgentMission(
+      "帮我写一个简单的todo list 看板board，带project的",
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+    );
+
+    expect(preview.tasks.length).toBeGreaterThanOrEqual(5);
+    expect(preview.tasks.map((task) => task.section)).toEqual(
+      expect.arrayContaining(["Workspace", "Projects", "Board", "Tasks", "Persistence"]),
+    );
+    expect(preview.tasks.map((task) => task.feature)).toEqual(
+      expect.arrayContaining(["Project list", "Kanban columns", "Task cards", "Saved state"]),
+    );
+    expect(preview.events.some((event) => event.message.includes("feature-level"))).toBe(true);
+  });
+
   it("can still extract legacy mission-run reports from model text", () => {
     const report = extractRunReportFromText(
       [

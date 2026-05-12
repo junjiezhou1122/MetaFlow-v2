@@ -39,6 +39,8 @@ export type MissionTask = {
   description: string;
   assignedTo: string;
   status: "queued" | "running" | "reviewing" | "done";
+  section?: string;
+  feature?: string;
   goal?: string;
   assignedAgentId?: string;
   requiredSkills?: string[];
@@ -436,7 +438,7 @@ export async function runMultiAgentMission(
     events = appendRuntimeEvent(
       events,
       "task.assigned",
-      `Meta Agent planned ${plannedTasks.length} task(s) across ${countAssignedAgents(
+      `Meta Agent planned ${plannedTasks.length} feature-level task(s) across ${countAssignedAgents(
         plannedTasks,
       )} agent(s).`,
     );
@@ -750,7 +752,7 @@ export async function runMissionIteration(
     events = appendRuntimeEvent(
       events,
       "task.assigned",
-      `Meta Agent replanned ${plannedTasks.length} follow-up task(s) across ${countAssignedAgents(
+      `Meta Agent replanned ${plannedTasks.length} feature-level follow-up task(s) across ${countAssignedAgents(
         plannedTasks,
       )} agent(s).`,
     );
@@ -1046,7 +1048,9 @@ async function runPlannerAgent(
         `Skills: ${agent.skills.join(", ")}`,
         "First search/reuse existing capabilities and skills from the registry. Do not guess from hardcoded categories.",
         "Return only a fenced JSON block named planner-output.json.",
-        "Shape: {\"finalBrief\": string, \"artifactKind\": string, \"requiredSkills\": string[], \"selectedCapabilityIds\": string[], \"tasks\": [{\"id\": string, \"title\": string, \"description\": string, \"assignedTo\": string, \"assignedAgentId\": string, \"requiredSkills\": string[], \"dependencies\": string[], \"expectedArtifact\": string, \"status\": \"queued\" | \"running\" | \"reviewing\" | \"done\"}]}",
+        "Shape: {\"finalBrief\": string, \"artifactKind\": string, \"requiredSkills\": string[], \"selectedCapabilityIds\": string[], \"tasks\": [{\"id\": string, \"section\": string, \"feature\": string, \"title\": string, \"description\": string, \"assignedTo\": string, \"assignedAgentId\": string, \"requiredSkills\": string[], \"dependencies\": string[], \"expectedArtifact\": string, \"status\": \"queued\" | \"running\" | \"reviewing\" | \"done\"}]}",
+        "Plan by product sections and features. One feature should usually become one task.",
+        "For software missions, decompose by user-visible sections such as workspace, projects, board, cards, filters, persistence, settings, sharing, and quality instead of returning one generic build task.",
         "Create mission-specific tasks. Do not force a generic planner/builder/reviewer board. Add review or repair tasks only when they are useful for the mission.",
       ].join("\n"),
     },
@@ -1615,6 +1619,8 @@ function isMissionTask(value: unknown): value is MissionTask {
     typeof task.description === "string" &&
     typeof task.assignedTo === "string" &&
     isTaskStatus(task.status) &&
+    (task.section === undefined || typeof task.section === "string") &&
+    (task.feature === undefined || typeof task.feature === "string") &&
     (task.goal === undefined || typeof task.goal === "string") &&
     (task.assignedAgentId === undefined || typeof task.assignedAgentId === "string") &&
     (task.requiredSkills === undefined ||
@@ -1820,7 +1826,10 @@ function createDynamicExecutionTasks(
   mission: string,
   agents: AgentProfile[],
 ): MissionTask[] {
-  const sourceTasks = tasks.length > 0 ? tasks : createExecutionTasks(mission);
+  const sourceTasks =
+    tasks.length > 0 && !isCoarseTaskPlan(tasks, mission)
+      ? tasks
+      : createFeatureExecutionTasks(mission);
   const normalized = sourceTasks.map((task, index) =>
     normalizePlannedTask(task, index, agents),
   );
@@ -1871,11 +1880,169 @@ function normalizePlannedTask(
     id: task.id.trim() || `task-${index + 1}`,
     assignedTo: task.assignedTo.trim() || assignedAgent.name,
     assignedAgentId: task.assignedAgentId || assignedAgent.id,
+    section: task.section?.trim() || inferTaskSection(task),
+    feature: task.feature?.trim() || inferTaskFeature(task),
     requiredSkills: task.requiredSkills?.filter(Boolean) ?? assignedAgent.skills.slice(0, 3),
     dependencies: task.dependencies?.filter(Boolean) ?? [],
     expectedArtifact: task.expectedArtifact,
     status: "queued",
   };
+}
+
+function isCoarseTaskPlan(tasks: MissionTask[], mission: string): boolean {
+  if (tasks.length < 4 && isSoftwareMission(mission.toLowerCase())) {
+    return true;
+  }
+
+  const uniqueAssignedAgents = new Set(tasks.map((task) => task.assignedTo.toLowerCase()));
+  const genericTitles = tasks.filter((task) =>
+    /^(build artifact|review artifact|generate app|build app|review app)$/i.test(
+      task.title.trim(),
+    ),
+  ).length;
+
+  return tasks.length <= 3 && uniqueAssignedAgents.size <= 2 && genericTitles >= tasks.length - 1;
+}
+
+function createFeatureExecutionTasks(mission: string): MissionTask[] {
+  const sections = inferMissionSections(mission);
+  return sections.map((section, index) => ({
+    id: `feature-${index + 1}`,
+    section: section.section,
+    feature: section.feature,
+    title: section.taskTitle,
+    description: `${section.taskDescription} Mission: ${mission}`,
+    assignedTo: section.assignedTo,
+    assignedAgentId: section.assignedAgentId,
+    requiredSkills: section.requiredSkills,
+    dependencies: index > 0 ? [`feature-${index}`] : [],
+    expectedArtifact: section.expectedArtifact,
+    status: "queued" as const,
+  }));
+}
+
+function inferMissionSections(mission: string) {
+  const normalized = mission.toLowerCase();
+  if (isSoftwareMission(normalized)) {
+    const sections = [
+      {
+        section: "Workspace",
+        feature: "Information architecture",
+        taskTitle: "Define app structure",
+        taskDescription: "Decide the primary screens, user flow, and visible app structure.",
+        assignedTo: "Product Planner",
+        assignedAgentId: "planner",
+        requiredSkills: ["mission analysis", "product planning"],
+        expectedArtifact: "app structure",
+      },
+    ];
+
+    if (/project|项目/.test(normalized)) {
+      sections.push({
+        section: "Projects",
+        feature: "Project list",
+        taskTitle: "Plan project management",
+        taskDescription: "Define how projects are created, selected, and connected to tasks.",
+        assignedTo: "Product Planner",
+        assignedAgentId: "planner",
+        requiredSkills: ["product planning", "data modeling"],
+        expectedArtifact: "project feature design",
+      });
+    }
+
+    if (/board|kanban|看板/.test(normalized)) {
+      sections.push({
+        section: "Board",
+        feature: "Kanban columns",
+        taskTitle: "Design board workflow",
+        taskDescription: "Define columns, movement, and task status behavior.",
+        assignedTo: "Interface Designer",
+        assignedAgentId: "designer",
+        requiredSkills: ["interface design", "workflow design"],
+        expectedArtifact: "board interaction model",
+      });
+    }
+
+    sections.push(
+      {
+        section: "Tasks",
+        feature: "Task cards",
+        taskTitle: "Build task interactions",
+        taskDescription: "Implement creating, editing, completing, deleting, and rendering tasks.",
+        assignedTo: "App Builder",
+        assignedAgentId: "builder",
+        requiredSkills: ["software implementation", "state management"],
+        expectedArtifact: "task interaction code",
+      },
+      {
+        section: "Persistence",
+        feature: "Saved state",
+        taskTitle: "Persist user data",
+        taskDescription: "Store user data locally so the generated tool remains useful after reload.",
+        assignedTo: "App Builder",
+        assignedAgentId: "builder",
+        requiredSkills: ["localStorage", "data persistence"],
+        expectedArtifact: "persistent state code",
+      },
+      {
+        section: "Quality",
+        feature: "Acceptance check",
+        taskTitle: "Verify generated tool",
+        taskDescription: "Check that the artifact satisfies the requested features and can be used directly.",
+        assignedTo: "QA Reviewer",
+        assignedAgentId: "reviewer",
+        requiredSkills: ["quality review", "requirements checking"],
+        expectedArtifact: "acceptance review",
+      },
+    );
+
+    return sections;
+  }
+
+  return [
+    {
+      section: "Outcome",
+      feature: "Mission framing",
+      taskTitle: "Frame the outcome",
+      taskDescription: "Turn the mission into a concrete deliverable structure.",
+      assignedTo: "Product Planner",
+      assignedAgentId: "planner",
+      requiredSkills: ["mission analysis"],
+      expectedArtifact: "delivery plan",
+    },
+    {
+      section: "Artifact",
+      feature: "Main deliverable",
+      taskTitle: "Create deliverable",
+      taskDescription: "Produce the requested artifact directly.",
+      assignedTo: "Builder",
+      assignedAgentId: "builder",
+      requiredSkills: ["artifact generation"],
+      expectedArtifact: "user artifact",
+    },
+    {
+      section: "Quality",
+      feature: "Acceptance check",
+      taskTitle: "Review deliverable",
+      taskDescription: "Check the deliverable against the mission.",
+      assignedTo: "Reviewer",
+      assignedAgentId: "reviewer",
+      requiredSkills: ["quality review"],
+      expectedArtifact: "acceptance review",
+    },
+  ];
+}
+
+function inferTaskSection(task: MissionTask): string | undefined {
+  if (isReviewTask(task)) return "Quality";
+  if (isArtifactTask(task)) return "Artifact";
+  return undefined;
+}
+
+function inferTaskFeature(task: MissionTask): string | undefined {
+  if (isReviewTask(task)) return "Acceptance check";
+  if (isArtifactTask(task)) return "Main deliverable";
+  return undefined;
 }
 
 function resolveAssignedAgent(task: MissionTask, agents: AgentProfile[]): AgentProfile {

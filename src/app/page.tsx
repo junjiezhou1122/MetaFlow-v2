@@ -965,6 +965,11 @@ function TasksView(props: { preview: MissionPreview }) {
                 .filter((task) => task.status === lane.id)
                 .map((task) => (
                   <article className="taskCard" key={task.id}>
+                    {task.section || task.feature ? (
+                      <span className="taskSection">
+                        {[task.section, task.feature].filter(Boolean).join(" / ")}
+                      </span>
+                    ) : null}
                     <strong>{task.title}</strong>
                     <span>{task.assignedTo}</span>
                     <small>{task.description}</small>

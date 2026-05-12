@@ -964,6 +964,12 @@ input:focus {
   margin: 0 0 12px;
 }
 
+.taskSection {
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
 .taskSkillRow {
   display: flex;
   flex-wrap: wrap;
