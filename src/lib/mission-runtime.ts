@@ -31,6 +31,13 @@ export type AgentProfile = {
   successCriteria: string[];
   temporary: boolean;
   createdBy: "system" | "meta-agent";
+  source?: "system" | "user" | "market";
+  marketId?: string;
+  category?: string;
+  tags?: string[];
+  originUrl?: string;
+  license?: string;
+  installedAt?: string;
 };
 
 export type MissionTask = {

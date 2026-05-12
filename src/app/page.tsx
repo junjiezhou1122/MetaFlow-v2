@@ -9,6 +9,7 @@ import {
 } from "@/lib/mission-history";
 import type { StoredMission } from "@/lib/mission-store";
 import type { AgentProfile, MissionArtifact, MissionPreview } from "@/lib/mission-runtime";
+import type { MarketAgent } from "@/lib/agent-market";
 import {
   defaultBaseUrlFor,
   defaultModelFor,
@@ -57,6 +58,8 @@ export default function Home() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [agents, setAgents] = useState<AgentProfile[]>([]);
+  const [marketAgents, setMarketAgents] = useState<MarketAgent[]>([]);
+  const [agentView, setAgentView] = useState<"mine" | "market">("mine");
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [agentDraft, setAgentDraft] = useState<AgentProfile | null>(null);
   const [agentSaved, setAgentSaved] = useState(false);
@@ -78,6 +81,7 @@ export default function Home() {
     void refreshMissions();
     void refreshApps();
     void refreshAgents();
+    void refreshMarketAgents();
     void refreshSettings();
   }, []);
 
@@ -116,6 +120,18 @@ export default function Home() {
       }
     } catch {
       setError("Could not load agent profiles.");
+    }
+  }
+
+  async function refreshMarketAgents() {
+    try {
+      const response = await fetch("/api/agent-market", { cache: "no-store" });
+      const data = (await response.json()) as { agents?: MarketAgent[] };
+      if (Array.isArray(data.agents)) {
+        setMarketAgents(data.agents);
+      }
+    } catch {
+      setError("Could not load agency market.");
     }
   }
 
@@ -345,6 +361,25 @@ export default function Home() {
     setAgentSaved(true);
   }
 
+  async function installMarketAgent(marketId: string) {
+    const response = await fetch("/api/agent-market/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ marketId }),
+    });
+    const data = (await response.json()) as { agent?: AgentProfile; error?: string };
+    if (!response.ok || !data.agent) {
+      setError(data.error || "Could not install agent.");
+      return;
+    }
+
+    setAgents((current) => upsertAgent(current, data.agent!));
+    setSelectedAgentId(data.agent.id);
+    setAgentDraft(data.agent);
+    setAgentView("mine");
+    setAgentSaved(true);
+  }
+
   const visiblePreview = activeMission?.preview ?? createEmptyPreview(activeMission?.input);
 
   return (
@@ -425,11 +460,15 @@ export default function Home() {
             agentSaved={agentSaved}
             agents={visibleAgents}
             activeAgent={activeAgent}
+            agentView={agentView}
             selectedAgentId={selectedAgentId}
+            marketAgents={marketAgents}
             onAgentChange={setAgentDraft}
             onCreateAgent={createAgentDraft}
+            onInstallMarketAgent={installMarketAgent}
             onSaveAgent={saveAgent}
             onSelectAgent={selectAgent}
+            onSelectAgentView={setAgentView}
           />
         )}
 
@@ -736,85 +775,143 @@ function AgentsView(props: {
   agentSaved: boolean;
   agents: AgentProfile[];
   activeAgent: AgentProfile | null;
+  agentView: "mine" | "market";
+  marketAgents: MarketAgent[];
   selectedAgentId: string;
   onAgentChange: (agent: AgentProfile) => void;
   onCreateAgent: () => void;
+  onInstallMarketAgent: (marketId: string) => void | Promise<void>;
   onSaveAgent: () => void;
   onSelectAgent: (agentId: string) => void;
+  onSelectAgentView: (view: "mine" | "market") => void;
 }) {
+  const installedMarketIds = new Set(
+    props.agents.map((agent) => agent.marketId).filter(Boolean),
+  );
+
   return (
     <div className="agentsCenter">
       <section className="settingsPanel agentPanel">
         <div className="agentRegistryHeader">
           <div>
-            <strong>Agent Registry</strong>
-            <span>{props.agents.length} profiles</span>
+            <strong>{props.agentView === "mine" ? "My Agents" : "Agency Market"}</strong>
+            <span>
+              {props.agentView === "mine"
+                ? `${props.agents.length} profiles`
+                : `${props.marketAgents.length} templates`}
+            </span>
           </div>
-          <button className="secondaryAction" type="button" onClick={props.onCreateAgent}>
-            New Agent
-          </button>
-        </div>
-        <div className="agentEditorGrid">
-          <div className="agentProfileList">
-            {props.agents.map((agent) => (
+          <div className="agentHeaderActions">
+            <div className="agentTabs">
               <button
-                className={agent.id === props.selectedAgentId ? "selected" : ""}
-                key={agent.id}
-                onClick={() => props.onSelectAgent(agent.id)}
+                className={props.agentView === "mine" ? "selected" : ""}
                 type="button"
+                onClick={() => props.onSelectAgentView("mine")}
               >
-                <strong>{agent.name}</strong>
-                <span>{agent.skills.join(" / ") || "No skills yet"}</span>
+                My Agents
               </button>
-            ))}
-          </div>
-
-          {props.activeAgent ? (
-            <div className="agentEditor">
-              <label>
-                Name
-                <input
-                  value={props.activeAgent.name}
-                  onChange={(event) =>
-                    props.onAgentChange({ ...props.activeAgent!, name: event.target.value })
-                  }
-                />
-              </label>
-              <label>
-                Description
-                <textarea
-                  value={props.activeAgent.description}
-                  onChange={(event) =>
-                    props.onAgentChange({
-                      ...props.activeAgent!,
-                      description: event.target.value,
-                    })
-                  }
-                  rows={3}
-                />
-              </label>
-              <label>
-                Skills
-                <input
-                  value={props.activeAgent.skills.join(", ")}
-                  onChange={(event) =>
-                    props.onAgentChange({
-                      ...props.activeAgent!,
-                      skills: splitList(event.target.value),
-                    })
-                  }
-                  placeholder="planning, building, review"
-                />
-              </label>
-              <div className="settingsActions">
-                <span>{props.agentSaved ? "Saved" : ""}</span>
-                <button type="button" onClick={props.onSaveAgent}>
-                  Save Agent
-                </button>
-              </div>
+              <button
+                className={props.agentView === "market" ? "selected" : ""}
+                type="button"
+                onClick={() => props.onSelectAgentView("market")}
+              >
+                Market
+              </button>
             </div>
-          ) : null}
+            {props.agentView === "mine" ? (
+              <button className="secondaryAction" type="button" onClick={props.onCreateAgent}>
+                New Agent
+              </button>
+            ) : null}
+          </div>
         </div>
+
+        {props.agentView === "mine" ? (
+          <div className="agentEditorGrid">
+            <div className="agentProfileList">
+              {props.agents.map((agent) => (
+                <button
+                  className={agent.id === props.selectedAgentId ? "selected" : ""}
+                  key={agent.id}
+                  onClick={() => props.onSelectAgent(agent.id)}
+                  type="button"
+                >
+                  <strong>{agent.name}</strong>
+                  <span>{agent.skills.join(" / ") || "No skills yet"}</span>
+                </button>
+              ))}
+            </div>
+
+            {props.activeAgent ? (
+              <div className="agentEditor">
+                <label>
+                  Name
+                  <input
+                    value={props.activeAgent.name}
+                    onChange={(event) =>
+                      props.onAgentChange({ ...props.activeAgent!, name: event.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  Description
+                  <textarea
+                    value={props.activeAgent.description}
+                    onChange={(event) =>
+                      props.onAgentChange({
+                        ...props.activeAgent!,
+                        description: event.target.value,
+                      })
+                    }
+                    rows={3}
+                  />
+                </label>
+                <label>
+                  Skills
+                  <input
+                    value={props.activeAgent.skills.join(", ")}
+                    onChange={(event) =>
+                      props.onAgentChange({
+                        ...props.activeAgent!,
+                        skills: splitList(event.target.value),
+                      })
+                    }
+                    placeholder="planning, building, review"
+                  />
+                </label>
+                <div className="settingsActions">
+                  <span>{props.agentSaved ? "Saved" : ""}</span>
+                  <button type="button" onClick={props.onSaveAgent}>
+                    Save Agent
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="marketAgentGrid">
+            {props.marketAgents.map((agent) => {
+              const installed = installedMarketIds.has(agent.marketId);
+              return (
+                <article className="marketAgentCard" key={agent.marketId}>
+                  <div>
+                    <span>{agent.category}</span>
+                    <strong>{agent.name}</strong>
+                    <p>{agent.description}</p>
+                  </div>
+                  <small>{agent.skills.slice(0, 5).join(" / ")}</small>
+                  <button
+                    type="button"
+                    disabled={installed}
+                    onClick={() => void props.onInstallMarketAgent(agent.marketId)}
+                  >
+                    {installed ? "Added" : "Add"}
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+        )}
       </section>
     </div>
   );

@@ -312,6 +312,41 @@ button {
   gap: 4px;
 }
 
+.agentHeaderActions {
+  align-items: center;
+  display: flex !important;
+  flex-direction: row;
+  gap: 10px !important;
+}
+
+.agentTabs {
+  display: flex !important;
+  gap: 6px !important;
+}
+
+.agentTabs button,
+.marketAgentCard button {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.agentTabs button.selected,
+.marketAgentCard button {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--surface);
+}
+
+.marketAgentCard button:disabled {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--muted);
+  cursor: default;
+}
+
 .agentRegistryHeader strong {
   font-size: 18px;
   font-weight: 500;
@@ -372,6 +407,44 @@ button {
 
 .agentEditor textarea {
   min-height: 230px;
+}
+
+.marketAgentGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.marketAgentCard {
+  background: transparent;
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 14px;
+  min-height: 230px;
+  padding: 14px;
+}
+
+.marketAgentCard div {
+  display: grid;
+  gap: 8px;
+}
+
+.marketAgentCard span,
+.marketAgentCard small {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.marketAgentCard strong {
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.marketAgentCard p {
+  color: var(--muted);
+  line-height: 1.45;
+  margin: 0;
 }
 
 .narrowStack {

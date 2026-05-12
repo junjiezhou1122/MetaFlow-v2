@@ -138,6 +138,18 @@ function normalizeAgentProfile(agent: AgentProfile): AgentProfile {
       .filter(Boolean),
     temporary: Boolean(agent.temporary),
     createdBy: agent.createdBy === "meta-agent" ? "meta-agent" : "system",
+    source:
+      agent.source === "market" || agent.source === "user" || agent.source === "system"
+        ? agent.source
+        : agent.createdBy === "system"
+          ? "system"
+          : "user",
+    marketId: agent.marketId?.trim() || undefined,
+    category: agent.category?.trim() || undefined,
+    tags: agent.tags?.map((tag) => tag.trim()).filter(Boolean) ?? undefined,
+    originUrl: agent.originUrl?.trim() || undefined,
+    license: agent.license?.trim() || undefined,
+    installedAt: agent.installedAt?.trim() || undefined,
   };
 }
 
@@ -157,7 +169,18 @@ function isAgentProfile(value: unknown): value is AgentProfile {
     Array.isArray(agent.successCriteria) &&
     agent.successCriteria.every((criterion) => typeof criterion === "string") &&
     typeof agent.temporary === "boolean" &&
-    (agent.createdBy === "system" || agent.createdBy === "meta-agent")
+    (agent.createdBy === "system" || agent.createdBy === "meta-agent") &&
+    (agent.source === undefined ||
+      agent.source === "system" ||
+      agent.source === "user" ||
+      agent.source === "market") &&
+    (agent.marketId === undefined || typeof agent.marketId === "string") &&
+    (agent.category === undefined || typeof agent.category === "string") &&
+    (agent.tags === undefined ||
+      (Array.isArray(agent.tags) && agent.tags.every((tag) => typeof tag === "string"))) &&
+    (agent.originUrl === undefined || typeof agent.originUrl === "string") &&
+    (agent.license === undefined || typeof agent.license === "string") &&
+    (agent.installedAt === undefined || typeof agent.installedAt === "string")
   );
 }
 
