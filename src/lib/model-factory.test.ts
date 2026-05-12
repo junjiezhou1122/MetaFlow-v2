@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createChatModel, createDirectChatModel } from "./model-factory";
+import {
+  createChatModel,
+  createDirectChatModel,
+  createMissionChatModel,
+  shouldForceFallbackRuntime,
+} from "./model-factory";
 
 describe("model factory", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("does not create a live model without an API key", () => {
@@ -57,6 +63,36 @@ describe("model factory", () => {
       }),
     );
     expect(result?.content).toContain("index.html");
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(requestBody.max_tokens).toBe(6000);
+  });
+
+  it("forces the stable direct runtime when METAFLOW_FORCE_FALLBACK is enabled", async () => {
+    vi.stubEnv("METAFLOW_FORCE_FALLBACK", "1");
+    const model = createMissionChatModel({
+      provider: "openai-compatible",
+      apiKey: "sk-test",
+      baseUrl: "https://llm.example.com/v1",
+      model: "gpt-5.4",
+    });
+
+    expect(shouldForceFallbackRuntime()).toBe(true);
+    expect(model).toBeTruthy();
+    expect("withConfig" in (model as object)).toBe(false);
+    expect("bindTools" in (model as object)).toBe(false);
+  });
+
+  it("uses the native DeepAgents-capable model unless fallback is forced", () => {
+    const model = createMissionChatModel({
+      provider: "openai-compatible",
+      apiKey: "sk-test",
+      baseUrl: "https://llm.example.com/v1",
+      model: "gpt-5.4",
+    });
+
+    expect(shouldForceFallbackRuntime()).toBe(false);
+    expect(model).toBeTruthy();
+    expect("withConfig" in (model as object)).toBe(true);
   });
 
   it("wraps OpenAI-compatible fetch failures with provider context", async () => {

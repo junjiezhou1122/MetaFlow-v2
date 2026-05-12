@@ -63,6 +63,17 @@ export function createDirectChatModel(settings: ProviderSettings) {
   });
 }
 
+export function createMissionChatModel(settings: ProviderSettings) {
+  return shouldForceFallbackRuntime()
+    ? createDirectChatModel(settings)
+    : createChatModel(settings);
+}
+
+export function shouldForceFallbackRuntime() {
+  const value = process.env.METAFLOW_FORCE_FALLBACK?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
 class OpenAICompatibleChatModel {
   constructor(
     private readonly settings: {
@@ -86,7 +97,7 @@ class OpenAICompatibleChatModel {
           model: this.settings.model,
           temperature: 0,
           stream: false,
-          max_tokens: 2200,
+          max_tokens: 6000,
           messages: messages.map((message) => ({
             role: message.role,
             content: normalizeMessageContent(message.content),

@@ -12,7 +12,7 @@ import {
   runMissionIteration,
   runMultiAgentMission,
 } from "./mission-runtime";
-import { createChatModel } from "./model-factory";
+import { createMissionChatModel } from "./model-factory";
 import { createSkillLibraryAgent, loadWorkspaceSkills } from "./skill-registry";
 import { FileSettingsStore } from "./settings-store";
 import {
@@ -77,7 +77,7 @@ async function executeMission(mission: StoredMission, settingsInput: unknown) {
     settingsSource && typeof settingsSource === "object"
       ? sanitizeProviderSettings(settingsSource as Partial<ProviderSettings>)
       : sanitizeProviderSettings(null);
-  const model = createChatModel(rawSettings);
+  const model = createMissionChatModel(rawSettings);
   const agents = await loadRuntimeAgents(mission.input);
 
   try {
@@ -149,7 +149,7 @@ async function executeMissionIteration(
     settingsSource && typeof settingsSource === "object"
       ? sanitizeProviderSettings(settingsSource as Partial<ProviderSettings>)
       : sanitizeProviderSettings(null);
-  const model = createChatModel(rawSettings);
+  const model = createMissionChatModel(rawSettings);
   const agents = await loadRuntimeAgents([mission.input, prompt].join("\n"));
 
   try {
