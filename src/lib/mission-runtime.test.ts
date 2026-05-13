@@ -463,8 +463,9 @@ describe("mission runtime", () => {
     expect(preview.artifacts?.[0]?.filename).toBe("index.html");
   });
 
-  it("uses planner tasks when native DeepAgents falls back to direct building", async () => {
+  it("skips replanning when native DeepAgents falls back to direct building", async () => {
     const progressEvents: string[] = [];
+    const calls: string[] = [];
     const model = {
       withConfig: () => model,
       invoke: async (input: unknown) => {
@@ -484,62 +485,12 @@ describe("mission runtime", () => {
         }
 
         if (prompt.includes("Planner agent")) {
-          return {
-            content: [
-              "```json filename=\"planner-output.json\"",
-              JSON.stringify({
-                finalBrief: "Planned a learning-agent app with mission-specific features.",
-                artifactKind: "web_app",
-                requiredSkills: ["agent education", "software implementation"],
-                selectedCapabilityIds: ["app-builder"],
-                tasks: [
-                  {
-                    id: "agent-concepts",
-                    section: "Learning",
-                    feature: "Agent concepts",
-                    title: "Teach agent basics",
-                    description: "Create a guided explanation of agent profiles, tools, and skills.",
-                    assignedTo: "Product Planner",
-                    assignedAgentId: "planner",
-                    requiredSkills: ["agent education"],
-                    dependencies: [],
-                    expectedArtifact: "learning outline",
-                    status: "queued",
-                  },
-                  {
-                    id: "practice-lab",
-                    section: "Practice",
-                    feature: "Interactive lab",
-                    title: "Build agent practice lab",
-                    description: "Implement an interactive exercise area for creating a sample agent.",
-                    assignedTo: "App Builder",
-                    assignedAgentId: "builder",
-                    requiredSkills: ["software implementation"],
-                    dependencies: ["agent-concepts"],
-                    expectedArtifact: "index.html",
-                    status: "queued",
-                  },
-                  {
-                    id: "learning-review",
-                    section: "Quality",
-                    feature: "Acceptance check",
-                    title: "Review learning flow",
-                    description: "Check that the app teaches agent concepts instead of todo management.",
-                    assignedTo: "QA Reviewer",
-                    assignedAgentId: "reviewer",
-                    requiredSkills: ["quality review"],
-                    dependencies: ["practice-lab"],
-                    expectedArtifact: "review",
-                    status: "queued",
-                  },
-                ],
-              }),
-              "```",
-            ].join("\n"),
-          };
+          calls.push("planner");
+          throw new Error("Fallback should not run the planner again.");
         }
 
         if (prompt.includes("You are Builder.")) {
+          calls.push("builder");
           return {
             content:
               "```html filename=\"index.html\"\n<!doctype html><html><body><main><h1>学习 Agent</h1><section>Agent profile, tools, skills</section><button>创建练习 Agent</button><script>localStorage.setItem('agent-lab','ready')</script></main></body></html>\n```",
@@ -563,14 +514,10 @@ describe("mission runtime", () => {
       },
     );
 
-    expect(preview.tasks.map((task) => task.id)).toEqual([
-      "agent-concepts",
-      "practice-lab",
-      "learning-review",
-    ]);
-    expect(preview.tasks.map((task) => task.feature)).toContain("Agent concepts");
-    expect(preview.tasks.map((task) => task.feature)).not.toContain("Task creation");
-    expect(progressEvents.some((event) => event.includes("Planner is creating"))).toBe(true);
+    expect(calls).not.toContain("planner");
+    expect(calls).toContain("builder");
+    expect(preview.tasks.map((task) => task.id)).toEqual(["task-1", "task-2", "task-3"]);
+    expect(progressEvents.some((event) => event.includes("Planner is creating"))).toBe(false);
     expect(preview.artifacts?.[0]?.content).toContain("学习 Agent");
   });
 
@@ -650,6 +597,115 @@ describe("mission runtime", () => {
         "DeepAgents updated todos: Plan scoreboard app; Build scoring controls",
         "DeepAgents delegated task to builder: Builder should implement team scoring controls.",
         "DeepAgents completed task: Builder returned a complete scoreboard artifact.",
+      ]),
+    );
+    expect(preview.artifacts?.[0]?.filename).toBe("index.html");
+  });
+
+  it("surfaces native section feature tasks and updates their status during streaming", async () => {
+    const progressSnapshots: string[][] = [];
+    const model = {
+      withConfig: () => model,
+      async *streamEvents() {
+        yield {
+          event: "on_tool_start",
+          name: "write_todos",
+          data: {
+            input: {
+              todos: [
+                {
+                  content: "Auth / Login form: Build email and password inputs",
+                  status: "pending",
+                },
+                {
+                  content: "Auth / Validation: Show inline error states",
+                  status: "pending",
+                },
+                {
+                  content: "Dashboard / Summary cards: Render user metrics",
+                  status: "pending",
+                },
+              ],
+            },
+          },
+        };
+        yield {
+          event: "on_tool_start",
+          name: "task",
+          data: {
+            input: {
+              description: "Build email and password inputs for the login form.",
+              subagent_type: "builder",
+            },
+          },
+        };
+        yield {
+          event: "on_tool_end",
+          name: "task",
+          data: {
+            output: "Login form implemented.",
+          },
+        };
+        yield {
+          event: "on_tool_end",
+          name: "submit_artifact",
+          data: {
+            output: JSON.stringify({
+              files: {
+                "/artifacts/index.html": {
+                  content:
+                    "<!doctype html><html><body><main><form><input type='email'><input type='password'></form><section>Summary cards</section></main></body></html>",
+                  mimeType: "text/html",
+                  created_at: "2026-05-13T00:00:00.000Z",
+                  modified_at: "2026-05-13T00:00:00.000Z",
+                },
+              },
+            }),
+          },
+        };
+      },
+      invoke: async () => {
+        throw new Error("Native stream path should not call invoke.");
+      },
+    };
+
+    const preview = await runMultiAgentMission(
+      "做一个登录后有数据概览的后台应用",
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+      async (update) => {
+        progressSnapshots.push(
+          update.preview.tasks.map((task) => `${task.section}:${task.feature}:${task.status}`),
+        );
+      },
+    );
+
+    expect(progressSnapshots.some((snapshot) => snapshot.length >= 3)).toBe(true);
+    expect(
+      progressSnapshots.some((snapshot) =>
+        snapshot.includes("Auth:Login form:running"),
+      ),
+    ).toBe(true);
+    expect(preview.error).toBeUndefined();
+    expect(preview.tasks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          section: "Auth",
+          feature: "Login form",
+          assignedAgentId: "builder",
+          status: "done",
+        }),
+        expect.objectContaining({
+          section: "Auth",
+          feature: "Validation",
+          status: "done",
+        }),
+        expect.objectContaining({
+          section: "Dashboard",
+          feature: "Summary cards",
+          status: "done",
+        }),
       ]),
     );
     expect(preview.artifacts?.[0]?.filename).toBe("index.html");
@@ -1434,6 +1490,273 @@ describe("mission runtime", () => {
     expect(preview.artifacts?.[0]?.filename).toBe("index.html");
     expect(preview.artifacts?.[0]?.content).toContain("Easy");
     expect(preview.finalBrief).toContain("Follow-up artifact accepted");
+  });
+
+  it("updates follow-up prompts through native DeepAgents when the model supports tools", async () => {
+    let receivedInput = "";
+    const model = {
+      withConfig: () => model,
+      async *streamEvents(input: unknown) {
+        receivedInput = JSON.stringify(input);
+        yield {
+          event: "on_tool_end",
+          name: "write_file",
+          data: {
+            output: {
+              update: {
+                files: {
+                  "/artifacts/index.html": {
+                    content:
+                      "<!doctype html><html><body><button id='start'>Start</button><script>let won=false; document.getElementById('start').onclick=()=>{won=false}</script></body></html>",
+                    mimeType: "text/html",
+                    created_at: "2026-05-12T00:00:00.000Z",
+                    modified_at: "2026-05-12T00:00:00.000Z",
+                  },
+                },
+              },
+            },
+          },
+        };
+      },
+      invoke: async () => {
+        throw new Error("Native follow-up should not use legacy invoke.");
+      },
+    };
+    const previousPreview = {
+      mission: "生成一个愤怒的小鸟游戏",
+      selectedCapabilities: [],
+      ephemeralAgents: [],
+      tasks: [],
+      events: [],
+      artifacts: [
+        {
+          id: "artifact-1",
+          filename: "index.html",
+          type: "html" as const,
+          title: "index.html",
+          description: "Game",
+          content:
+            "<!doctype html><html><body><button id='start'>Start</button><script>let won=true</script></body></html>",
+        },
+      ],
+      finalBrief: "Game is ready.",
+    };
+
+    const preview = await runMissionIteration(
+      "生成一个愤怒的小鸟游戏",
+      "还没玩就说我赢了，修复这个问题",
+      previousPreview,
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+    );
+
+    expect(receivedInput).toContain("Follow-up prompt");
+    expect(receivedInput).toContain("/artifacts/index.html");
+    expect(preview.error).toBeUndefined();
+    expect(preview.artifacts?.[0]?.content).toContain("won=false");
+    expect(preview.events.map((event) => event.message)).toEqual(
+      expect.arrayContaining([
+        "Native DeepAgents is updating the mission from the follow-up prompt.",
+        "Native DeepAgents completed the follow-up update.",
+      ]),
+    );
+  });
+
+  it("falls back to direct artifact editing when native follow-up loops on reads", async () => {
+    const calls: string[] = [];
+    const model = {
+      withConfig: () => model,
+      async *streamEvents() {
+        for (let index = 0; index < 8; index += 1) {
+          yield {
+            event: "on_tool_end",
+            name: "read_file",
+            data: { output: "current artifact content" },
+          };
+        }
+      },
+      invoke: async (messages: Array<{ role: string; content: string }>) => {
+        const prompt = messages.map((message) => message.content).join("\n");
+        if (prompt.includes("Update the existing product")) {
+          calls.push("direct-edit");
+          return {
+            content:
+              "```html filename=\"index.html\"\n<!doctype html><html><body><button id='start'>Start</button><script>let won=false</script></body></html>\n```",
+          };
+        }
+        throw new Error("Unexpected direct fallback prompt");
+      },
+    };
+    const previousPreview = {
+      mission: "生成一个小游戏",
+      selectedCapabilities: [],
+      ephemeralAgents: [],
+      tasks: [],
+      events: [],
+      artifacts: [
+        {
+          id: "artifact-1",
+          filename: "index.html",
+          type: "html" as const,
+          title: "index.html",
+          description: "Game",
+          content: "<!doctype html><html><body><script>let won=true</script></body></html>",
+        },
+      ],
+      finalBrief: "Game is ready.",
+    };
+
+    const preview = await runMissionIteration(
+      "生成一个小游戏",
+      "还没玩就赢了，修复胜利判断",
+      previousPreview,
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+    );
+
+    expect(calls).toEqual(["direct-edit"]);
+    expect(preview.error).toBeUndefined();
+    expect(preview.artifacts?.[0]?.content).toContain("won=false");
+    expect(preview.events.map((event) => event.message)).toEqual(
+      expect.arrayContaining([
+        "Native DeepAgents follow-up stalled on repeated reads; direct artifact edit is taking over.",
+        "Direct artifact edit completed the follow-up update.",
+      ]),
+    );
+  });
+
+  it("falls back to direct artifact editing when native write_file exposes no file update", async () => {
+    const calls: string[] = [];
+    const model = {
+      withConfig: () => model,
+      async *streamEvents() {
+        yield {
+          event: "on_tool_end",
+          name: "write_file",
+          data: { output: "Successfully wrote to '/artifacts/index.html'" },
+        };
+      },
+      invoke: async (messages: Array<{ role: string; content: string }>) => {
+        const prompt = messages.map((message) => message.content).join("\n");
+        if (prompt.includes("Update the existing product")) {
+          calls.push("direct-edit");
+          return {
+            content:
+              "```html filename=\"index.html\"\n<!doctype html><html><body><button>Restart</button><script>let status='playing'</script></body></html>\n```",
+          };
+        }
+        throw new Error("Unexpected direct fallback prompt");
+      },
+    };
+    const previousPreview = {
+      mission: "生成一个小游戏",
+      selectedCapabilities: [],
+      ephemeralAgents: [],
+      tasks: [],
+      events: [],
+      artifacts: [
+        {
+          id: "artifact-1",
+          filename: "index.html",
+          type: "html" as const,
+          title: "index.html",
+          description: "Game",
+          content: "<!doctype html><html><body><script>let status='won'</script></body></html>",
+        },
+      ],
+      finalBrief: "Game is ready.",
+    };
+
+    const preview = await runMissionIteration(
+      "生成一个小游戏",
+      "增加重新开始按钮，初始状态不能是胜利",
+      previousPreview,
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+    );
+
+    expect(calls).toEqual(["direct-edit"]);
+    expect(preview.error).toBeUndefined();
+    expect(preview.artifacts?.[0]?.content).toContain("Restart");
+    expect(preview.events.map((event) => event.message)).toContain(
+      "Native DeepAgents wrote a file without returning file content; direct artifact edit is taking over.",
+    );
+  });
+
+  it("falls back to direct artifact editing when native follow-up returns unchanged artifacts", async () => {
+    const calls: string[] = [];
+    const unchanged =
+      "<!doctype html><html><body><h1>Old title</h1><button>Vote</button></body></html>";
+    const model = {
+      withConfig: () => model,
+      async *streamEvents() {
+        yield {
+          event: "on_chain_end",
+          name: "artifact-handoff",
+          data: {
+            output: {
+              messages: [{ content: "I updated the artifact." }],
+              files: {
+                "/artifacts/index.html": {
+                  content: unchanged,
+                  mimeType: "text/html",
+                  created_at: "2026-05-12T00:00:00.000Z",
+                  modified_at: "2026-05-12T00:00:00.000Z",
+                },
+              },
+            },
+          },
+        };
+      },
+      invoke: async (messages: Array<{ role: string; content: string }>) => {
+        const prompt = messages.map((message) => message.content).join("\n");
+        if (prompt.includes("Update the existing product")) {
+          calls.push("direct-edit");
+          return {
+            content:
+              "```html filename=\"index.html\"\n<!doctype html><html><body><h1>我的投票工具</h1><button>清空所有选项</button></body></html>\n```",
+          };
+        }
+        throw new Error("Unexpected direct fallback prompt");
+      },
+    };
+    const previousPreview = {
+      mission: "生成一个投票应用",
+      selectedCapabilities: [],
+      ephemeralAgents: [],
+      tasks: [],
+      events: [],
+      artifacts: [
+        {
+          id: "artifact-1",
+          filename: "index.html",
+          type: "html" as const,
+          title: "index.html",
+          description: "Poll",
+          content: unchanged,
+        },
+      ],
+      finalBrief: "Poll is ready.",
+    };
+
+    const preview = await runMissionIteration(
+      "生成一个投票应用",
+      "把标题改成我的投票工具，并增加清空所有选项按钮",
+      previousPreview,
+      undefined,
+      model as never,
+      createDefaultAgentProfiles(),
+    );
+
+    expect(calls).toEqual(["direct-edit"]);
+    expect(preview.error).toBeUndefined();
+    expect(preview.artifacts?.[0]?.content).toContain("我的投票工具");
+    expect(preview.events.map((event) => event.message)).toContain(
+      "Native DeepAgents returned no changed artifact; direct artifact edit is taking over.",
+    );
   });
 
   it("can still extract legacy mission-run reports from model text", () => {

@@ -176,6 +176,16 @@ type DeepAgentRunner = {
   ) => AsyncIterable<unknown>;
 };
 
+type NativeTaskTracker = {
+  tasks: MissionTask[];
+  activeTaskId?: string;
+};
+
+type NativeTodoItem = {
+  content: string;
+  status?: string;
+};
+
 export type MissionProgressStage =
   | "planning"
   | "building"
@@ -425,6 +435,7 @@ export function createMetaAgentDefinition(
         "You are Meta Agent, a calm orchestrator.",
         "Use the DeepAgents task tool to delegate substantial mission sections to available subagents.",
         "Use write_todos for the mission plan, and read relevant SKILL.md files before executing specialized work.",
+        "Write todos as feature-level items in this exact content shape: Section / User-visible feature name: concrete task. The Feature part must be specific, never the generic word Feature. Do not use file paths as the section/feature separator.",
         "Search existing capabilities and skills first, create temporary agents only for uncovered needs, assign scoped tasks, monitor progress, request revisions, and synthesize the final result in user-friendly language.",
         "Use write_file to save every final user-facing deliverable under /artifacts/ before the final response.",
         "Call submit_artifact with every complete final deliverable before ending the run.",
@@ -933,6 +944,9 @@ async function runNativeDeepAgentMission(
             "",
             "Execute this mission end to end.",
             "Use write_todos to plan.",
+            "Each todo content must be one feature-level task formatted as: Section / User-visible feature name: concrete task.",
+            "The Feature part must be specific, for example Counter controls, Reset action, Login form, Summary cards. Never use the generic word Feature.",
+            "A mission may have many sections, and each section may have many features. Prefer one todo per feature.",
             "Use available subagents through the task tool when work can be split.",
             "Use the skills system: inspect available skills and read relevant SKILL.md files before specialized work.",
             "Save final user-facing deliverables with write_file under /artifacts/.",
@@ -954,6 +968,7 @@ async function runNativeDeepAgentMission(
       preview,
       events,
       provider,
+      agentProfiles,
       onProgress,
     );
     events = streamed.events;
@@ -981,6 +996,7 @@ async function runNativeDeepAgentMission(
         stage: "building",
         preview: {
           ...preview,
+          tasks: streamed.tasks ?? preview.tasks,
           events,
           finalBrief: "DeepAgents is completing the artifact handoff.",
           mode: "deepagents",
@@ -999,9 +1015,13 @@ async function runNativeDeepAgentMission(
       const closure = await runNativeDeepAgentWithEvents(
         closureAgent,
         closureInput,
-        preview,
+        {
+          ...preview,
+          tasks: streamed.tasks ?? preview.tasks,
+        },
         events,
         provider,
+        agentProfiles,
         onProgress,
       );
       events = closure.events;
@@ -1023,6 +1043,7 @@ async function runNativeDeepAgentMission(
           closureOutput,
           agentProfiles,
           provider,
+          closure.tasks ?? streamed.tasks,
         );
       }
 
@@ -1034,6 +1055,7 @@ async function runNativeDeepAgentMission(
         preview,
         events,
         closureOutput,
+        closure.tasks ?? streamed.tasks,
         onProgress,
       );
     }
@@ -1045,6 +1067,7 @@ async function runNativeDeepAgentMission(
       output,
       agentProfiles,
       provider,
+      streamed.tasks,
     );
 
     await onProgress?.({
@@ -1076,11 +1099,14 @@ function buildNativeDeepAgentPreview(
   output: string,
   agentProfiles: AgentProfile[],
   provider: MissionPreview["provider"] | undefined,
+  trackedTasks?: MissionTask[],
 ): MissionPreview {
   const tasks =
     report?.tasks && report.tasks.length > 0
       ? completeAllTasks(createDynamicExecutionTasks(report.tasks, preview.mission, agentProfiles))
-      : completeAllTasks(createDynamicExecutionTasks([], preview.mission, agentProfiles));
+      : trackedTasks && trackedTasks.length > 0
+        ? completeAllTasks(trackedTasks)
+        : completeAllTasks(createDynamicExecutionTasks([], preview.mission, agentProfiles));
   const runLogs =
     report?.runLogs && report.runLogs.length > 0
       ? report.runLogs
@@ -1170,6 +1196,7 @@ async function runFallbackDirectMissionAfterNativeAttempt(
   preview: MissionPreview,
   nativeEvents: MissionEvent[],
   nativeOutput: string,
+  nativeTasks?: MissionTask[],
   onProgress?: (update: MissionProgressUpdate) => void | Promise<void>,
 ): Promise<MissionPreview> {
   let events = appendRuntimeEvent(
@@ -1177,51 +1204,16 @@ async function runFallbackDirectMissionAfterNativeAttempt(
     "task.started",
     "Native DeepAgents produced no artifact blocks; falling back to direct artifact builder.",
   );
-  const planner = findAgent(agentProfiles, "planner");
   const builder = findAgent(agentProfiles, "builder");
   const reviewer = findAgent(agentProfiles, "reviewer");
-
-  events = appendRuntimeEvent(
-    events,
-    "task.started",
-    "Planner is creating mission-specific fallback tasks from the native DeepAgents context.",
-  );
-  await onProgress?.({
-    stage: "planning",
-    preview: {
-      ...preview,
-      events,
-      finalBrief: "Planner is creating mission-specific fallback tasks.",
-      mode: "deepagents",
-      provider,
-      finalOutput: nativeOutput,
-    },
-  });
-
-  const plannerOutput = await runWithProgressHeartbeat(
-    () => runPlannerAgentWithRepair(mission, preview, planner, model),
-    () => ({
-      stage: "planning",
-      preview: {
-        ...preview,
-        events: appendUniqueRuntimeEvent(
-          events,
-          "task.started",
-          `${planner.name} is still creating mission-specific tasks.`,
-        ),
-        finalBrief: "Planner is still creating mission-specific tasks.",
-        mode: "deepagents",
-        provider,
-        finalOutput: nativeOutput,
-      },
-    }),
-    onProgress,
-  );
-  const tasks = createDynamicExecutionTasks(
-    plannerOutput.tasks,
-    mission,
-    agentProfiles,
-  );
+  const tasks =
+    nativeTasks && nativeTasks.length > 0
+      ? createDynamicExecutionTasks(
+          ensureNativeFallbackReviewTask(nativeTasks, mission, agentProfiles),
+          mission,
+          agentProfiles,
+        )
+      : createDynamicExecutionTasks([], mission, agentProfiles);
   const runLogs: MissionRunLog[] = [
     {
       agent: "Meta Agent",
@@ -1229,18 +1221,12 @@ async function runFallbackDirectMissionAfterNativeAttempt(
       level: "warning",
       message: "Native DeepAgents completed without named artifact blocks.",
     },
-    {
-      agent: planner.name,
-      taskId: "fallback-planner",
-      level: "info",
-      message: plannerOutput.finalBrief,
-    },
   ];
 
   events = appendRuntimeEvent(
     events,
     "task.assigned",
-    `Planner created ${tasks.length} mission-specific fallback task(s) across ${countAssignedAgents(
+    `Meta Agent prepared ${tasks.length} direct fallback task(s) across ${countAssignedAgents(
       tasks,
     )} agent(s).`,
   );
@@ -1252,9 +1238,7 @@ async function runFallbackDirectMissionAfterNativeAttempt(
       tasks,
       events,
       runLogs,
-      artifactKind: plannerOutput.artifactKind,
-      requiredSkills: plannerOutput.requiredSkills,
-      finalBrief: plannerOutput.finalBrief,
+      finalBrief: "Meta Agent is skipping replanning and sending the mission directly to Builder.",
       mode: "deepagents",
       provider,
       finalOutput: nativeOutput,
@@ -1273,8 +1257,6 @@ async function runFallbackDirectMissionAfterNativeAttempt(
       tasks: buildingTasks,
       events,
       runLogs,
-      artifactKind: plannerOutput.artifactKind,
-      requiredSkills: plannerOutput.requiredSkills,
       finalBrief: "Direct builder is generating artifacts after native DeepAgents produced no artifact.",
       mode: "deepagents",
       provider,
@@ -1285,9 +1267,9 @@ async function runFallbackDirectMissionAfterNativeAttempt(
   const builderOutput = await runWithProgressHeartbeat(
     () =>
       runBuilderAgent(mission, buildingTasks, builder, model, {
-        artifactKind: plannerOutput.artifactKind,
-        requiredSkills: plannerOutput.requiredSkills,
-        selectedCapabilityIds: plannerOutput.selectedCapabilityIds,
+        artifactKind: "web_app",
+        requiredSkills: ["artifact generation"],
+        selectedCapabilityIds: ["app-builder"],
       }),
     () => ({
       stage: "building",
@@ -1300,8 +1282,6 @@ async function runFallbackDirectMissionAfterNativeAttempt(
           `${builder.name} is still generating the artifact.`,
         ),
         runLogs,
-        artifactKind: plannerOutput.artifactKind,
-        requiredSkills: plannerOutput.requiredSkills,
         finalBrief: "Builder is still generating the artifact.",
         mode: "deepagents",
         provider,
@@ -1349,8 +1329,8 @@ async function runFallbackDirectMissionAfterNativeAttempt(
     tasks: completeAllTasks(afterBuildTasks),
     events,
     runLogs,
-    artifactKind: plannerOutput.artifactKind,
-    requiredSkills: plannerOutput.requiredSkills,
+    artifactKind: "web_app",
+    requiredSkills: ["artifact generation"],
     artifacts,
     mode: "deepagents",
     finalOutput: [nativeOutput, builderOutput, formatReviewOutput(review)].join("\n\n"),
@@ -1369,19 +1349,29 @@ async function runNativeDeepAgentWithEvents(
   preview: MissionPreview,
   initialEvents: MissionEvent[],
   provider: MissionPreview["provider"] | undefined,
+  agentProfiles: AgentProfile[] = createDefaultAgentProfiles(),
   onProgress?: (update: MissionProgressUpdate) => void | Promise<void>,
-): Promise<{ result: unknown; events: MissionEvent[]; error?: string }> {
+): Promise<{
+  result: unknown;
+  events: MissionEvent[];
+  error?: string;
+  wroteArtifact?: boolean;
+  wroteArtifactWithoutContent?: boolean;
+  tasks?: MissionTask[];
+}> {
   if (typeof agent.streamEvents !== "function") {
     try {
       return {
         result: await agent.invoke(input),
         events: initialEvents,
+        tasks: preview.tasks,
       };
     } catch (error) {
       return {
         result: "",
         events: initialEvents,
         error: formatErrorMessage(error, "Native DeepAgents invoke failed."),
+        tasks: preview.tasks,
       };
     }
   }
@@ -1390,18 +1380,52 @@ async function runNativeDeepAgentWithEvents(
   let result: unknown;
   let streamedFiles: Record<string, unknown> = {};
   let streamError: string | undefined;
+  let wroteArtifact = false;
+  let wroteArtifactWithoutContent = false;
+  let readFileEventsWithoutArtifact = 0;
+  let tracker: NativeTaskTracker = {
+    tasks: [...preview.tasks],
+  };
 
   try {
     for await (const streamEvent of agent.streamEvents(input, { version: "v2" })) {
       const eventFiles = extractStreamEventFiles(streamEvent);
+      tracker = updateNativeTaskTrackerFromEvent(
+        tracker,
+        streamEvent,
+        preview.mission,
+        [...agentProfiles, ...preview.ephemeralAgents],
+      );
+      tracker = mergeNativeTrackerWithOutputTodos(
+        tracker,
+        extractStreamText(streamEvent),
+        preview.mission,
+        agentProfiles,
+      );
+      if (
+        isArtifactWriteEndEvent(streamEvent) &&
+        Object.keys(eventFiles).length === 0
+      ) {
+        wroteArtifactWithoutContent = true;
+      }
       streamedFiles = {
         ...streamedFiles,
         ...eventFiles,
       };
+      if (isToolEndEvent(streamEvent, "read_file")) {
+        readFileEventsWithoutArtifact += 1;
+      }
       if (
         isEarlyArtifactStreamEvent(streamEvent) &&
         extractArtifactsFromDeepAgentFiles({ files: eventFiles }).length > 0
       ) {
+        wroteArtifact = true;
+        tracker = mergeNativeTrackerWithOutputTodos(
+          tracker,
+          extractStreamText(streamEvent),
+          preview.mission,
+          agentProfiles,
+        );
         const message = formatDeepAgentStreamEvent(streamEvent);
         if (message) {
           events = appendUniqueRuntimeEvent(events, streamEventType(message), message);
@@ -1409,6 +1433,7 @@ async function runNativeDeepAgentWithEvents(
             stage: progressStageForStreamMessage(message),
             preview: {
               ...preview,
+              tasks: tracker.tasks,
               events,
               finalBrief: message,
               mode: "deepagents",
@@ -1419,12 +1444,21 @@ async function runNativeDeepAgentWithEvents(
         return {
           result: mergeDeepAgentRunResult(result ?? "", streamedFiles),
           events,
+          tasks: tracker.tasks,
+          wroteArtifact,
+          wroteArtifactWithoutContent,
         };
       }
 
       const output = extractStreamEventOutput(streamEvent);
       if (output !== undefined) {
         result = mergeDeepAgentRunResult(output, streamedFiles);
+        tracker = mergeNativeTrackerWithOutputTodos(
+          tracker,
+          extractDeepAgentOutput(result),
+          preview.mission,
+          agentProfiles,
+        );
       }
 
       const message = formatDeepAgentStreamEvent(streamEvent);
@@ -1437,12 +1471,25 @@ async function runNativeDeepAgentWithEvents(
         stage: progressStageForStreamMessage(message),
         preview: {
           ...preview,
+          tasks: tracker.tasks,
           events,
           finalBrief: message,
           mode: "deepagents",
           provider,
         },
       });
+      if (wroteArtifactWithoutContent || readFileEventsWithoutArtifact >= 6) {
+        return {
+          result: mergeDeepAgentRunResult(result ?? "", streamedFiles),
+          events,
+          tasks: tracker.tasks,
+          error: wroteArtifactWithoutContent
+            ? "Native DeepAgents wrote a file without returning file content."
+            : "Native DeepAgents stalled on repeated read_file events.",
+          wroteArtifact,
+          wroteArtifactWithoutContent,
+        };
+      }
     }
   } catch (error) {
     streamError = formatErrorMessage(error, "Native DeepAgents stream failed.");
@@ -1451,8 +1498,532 @@ async function runNativeDeepAgentWithEvents(
   return {
     result: mergeDeepAgentRunResult(result ?? "", streamedFiles),
     events,
+    tasks: tracker.tasks,
     error: streamError,
+    wroteArtifact,
+    wroteArtifactWithoutContent,
   };
+}
+
+function updateNativeTaskTrackerFromEvent(
+  tracker: NativeTaskTracker,
+  event: unknown,
+  mission: string,
+  agents: AgentProfile[],
+): NativeTaskTracker {
+  if (!event || typeof event !== "object") {
+    return tracker;
+  }
+
+  const value = event as Record<string, unknown>;
+  const eventName = typeof value.event === "string" ? value.event : "";
+  const runnableName = typeof value.name === "string" ? value.name : "";
+  const data = value.data && typeof value.data === "object"
+    ? (value.data as Record<string, unknown>)
+    : {};
+
+  if (eventName === "on_tool_start" && runnableName === "write_todos") {
+    const todoTasks = createTasksFromNativeTodos(
+      extractTodoItems(data.input),
+      mission,
+      agents,
+    );
+    if (todoTasks.length === 0) {
+      return tracker;
+    }
+
+    return {
+      ...tracker,
+      tasks: mergeNativeTasks(tracker.tasks, todoTasks),
+    };
+  }
+
+  if (eventName === "on_tool_start" && runnableName === "task") {
+    const input = data.input && typeof data.input === "object"
+      ? (data.input as Record<string, unknown>)
+      : {};
+    const description =
+      typeof input.description === "string" && input.description.trim()
+        ? input.description.trim()
+        : summarizeUnknown(input);
+    const assignedAgent = resolveNativeSubagent(input.subagent_type, description, agents);
+    let tasks = tracker.tasks;
+    if (tasks.length === 0) {
+      tasks = [
+        createNativeMissionTask({
+          index: 0,
+          mission,
+          agents,
+          content: description,
+          status: "running",
+          assignedAgent,
+        }),
+      ];
+    }
+
+    const taskId = matchNativeTaskId(tasks, description) ?? tasks[0]!.id;
+    return {
+      activeTaskId: taskId,
+      tasks: tasks.map((task) =>
+        task.id === taskId
+          ? {
+              ...task,
+              status: "running",
+              assignedTo: assignedAgent.name,
+              assignedAgentId: assignedAgent.id,
+              requiredSkills: task.requiredSkills?.length
+                ? task.requiredSkills
+                : assignedAgent.skills.slice(0, 3),
+              requiredSkillIds:
+                task.requiredSkillIds?.length
+                  ? task.requiredSkillIds
+                  : assignedAgent.skillIds?.slice(0, 3) ??
+                    assignedAgent.skillDetails?.map((skill) => skill.id).slice(0, 3),
+            }
+          : task.status === "running"
+            ? { ...task, status: "queued" }
+            : task,
+      ),
+    };
+  }
+
+  if (eventName === "on_tool_end" && runnableName === "task") {
+    const output = summarizeUnknown(data.output);
+    const taskId = tracker.activeTaskId ?? matchNativeTaskId(tracker.tasks, output);
+    if (!taskId) {
+      return tracker;
+    }
+
+    return {
+      activeTaskId: undefined,
+      tasks: markTasksDone(tracker.tasks, [taskId]),
+    };
+  }
+
+  if (
+    eventName === "on_tool_end" &&
+    (runnableName === "submit_artifact" || runnableName === "write_file")
+  ) {
+    return {
+      ...tracker,
+      tasks: tracker.tasks.length > 0 ? completeAllTasks(tracker.tasks) : tracker.tasks,
+    };
+  }
+
+  return tracker;
+}
+
+function mergeNativeTrackerWithOutputTodos(
+  tracker: NativeTaskTracker,
+  output: string,
+  mission: string,
+  agents: AgentProfile[],
+): NativeTaskTracker {
+  const todoTasks = createTasksFromNativeTodos(
+    extractTodoItemsFromText(output),
+    mission,
+    agents,
+  );
+  if (todoTasks.length === 0) {
+    return tracker;
+  }
+
+  return {
+    ...tracker,
+    tasks: mergeNativeTasks(tracker.tasks, todoTasks),
+  };
+}
+
+function createTasksFromNativeTodos(
+  todos: NativeTodoItem[],
+  mission: string,
+  agents: AgentProfile[],
+): MissionTask[] {
+  return todos
+    .filter((todo) => todo.content.trim())
+    .slice(0, 12)
+    .map((todo, index) =>
+      createNativeMissionTask({
+        index,
+        mission,
+        agents,
+        content: todo.content,
+        status: mapNativeTodoStatus(todo.status),
+      }),
+    );
+}
+
+function extractTodoItems(input: unknown): NativeTodoItem[] {
+  if (!input || typeof input !== "object") {
+    return [];
+  }
+
+  const todos = (input as Record<string, unknown>).todos;
+  if (!Array.isArray(todos)) {
+    return [];
+  }
+
+  return todos
+    .map((todo): NativeTodoItem | null => {
+      if (typeof todo === "string") {
+        const content = todo.trim();
+        return content ? { content } : null;
+      }
+      if (!todo || typeof todo !== "object") {
+        return null;
+      }
+
+      const record = todo as Record<string, unknown>;
+      const content =
+        typeof record.content === "string"
+          ? record.content.trim()
+          : typeof record.task === "string"
+            ? record.task.trim()
+            : "";
+      if (!content) {
+        return null;
+      }
+
+      return {
+        content,
+        status: typeof record.status === "string" ? record.status : undefined,
+      };
+    })
+    .filter((todo): todo is NativeTodoItem => !!todo);
+}
+
+function extractTodoItemsFromText(text: string): NativeTodoItem[] {
+  const marker = "Updated todo list to ";
+  const items: NativeTodoItem[] = [];
+  let searchIndex = 0;
+
+  while (searchIndex < text.length) {
+    const markerIndex = text.indexOf(marker, searchIndex);
+    if (markerIndex < 0) {
+      break;
+    }
+
+    const startIndex = text.indexOf("[", markerIndex + marker.length);
+    if (startIndex < 0) {
+      break;
+    }
+
+    const jsonText = extractBalancedJsonArray(text, startIndex);
+    if (jsonText) {
+      items.push(...extractTodoItems({ todos: parseUnknownJson(jsonText) }));
+      searchIndex = startIndex + jsonText.length;
+    } else {
+      searchIndex = startIndex + 1;
+    }
+  }
+
+  return items;
+}
+
+function extractBalancedJsonArray(text: string, startIndex: number): string | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = startIndex; index < text.length; index += 1) {
+    const char = text[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) {
+      continue;
+    }
+    if (char === "[") {
+      depth += 1;
+    }
+    if (char === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(startIndex, index + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function parseUnknownJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function ensureNativeFallbackReviewTask(
+  tasks: MissionTask[],
+  mission: string,
+  agents: AgentProfile[],
+): MissionTask[] {
+  if (tasks.some((task) => isReviewTask(task))) {
+    return tasks;
+  }
+
+  const reviewer = findAgent(agents, "reviewer");
+  return [
+    ...tasks,
+    {
+      id: "native-review",
+      title: "Review artifact",
+      description: `Check whether the generated artifact satisfies: ${mission}`,
+      assignedTo: reviewer.name,
+      assignedAgentId: reviewer.id,
+      section: "Quality",
+      feature: "Acceptance check",
+      requiredSkills: reviewer.skills.slice(0, 3),
+      requiredSkillIds:
+        reviewer.skillIds?.slice(0, 3) ??
+        reviewer.skillDetails?.map((skill) => skill.id).slice(0, 3),
+      dependencies: tasks.length > 0 ? [tasks[tasks.length - 1]!.id] : [],
+      expectedArtifact: "acceptance review",
+      status: "queued",
+    },
+  ];
+}
+
+function createNativeMissionTask({
+  index,
+  mission,
+  agents,
+  content,
+  status,
+  assignedAgent,
+}: {
+  index: number;
+  mission: string;
+  agents: AgentProfile[];
+  content: string;
+  status: MissionTask["status"];
+  assignedAgent?: AgentProfile;
+}): MissionTask {
+  const parsed = parseNativeSectionFeature(content);
+  const agent = assignedAgent ?? resolveNativeSubagent(undefined, content, agents);
+  const title = parsed.feature || parsed.title || `Feature ${index + 1}`;
+
+  return {
+    id: `native-task-${slugifyTaskId(`${parsed.section}-${title}`) || index + 1}`,
+    title,
+    description: parsed.description || content || `Implement feature for: ${mission}`,
+    assignedTo: agent.name,
+    assignedAgentId: agent.id,
+    section: parsed.section,
+    feature: parsed.feature || title,
+    requiredSkills: agent.skills.slice(0, 3),
+    requiredSkillIds:
+      agent.skillIds?.slice(0, 3) ??
+      agent.skillDetails?.map((skill) => skill.id).slice(0, 3),
+    dependencies: [],
+    expectedArtifact: isReviewLikeText(content) ? "acceptance review" : "feature artifact",
+    status,
+  };
+}
+
+function parseNativeSectionFeature(content: string): {
+  section?: string;
+  feature?: string;
+  title?: string;
+  description?: string;
+} {
+  const trimmed = content.trim().replace(/^\s*[-*]\s*/, "");
+  const [head, ...descriptionParts] = trimmed.split(":");
+  const description = descriptionParts.join(":").trim() || undefined;
+  const normalizedHead = head?.trim() || trimmed;
+  const slashParts = normalizedHead
+    .split(/\s+(?:\/|>|->|::)\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (slashParts.length >= 2) {
+    return {
+      section: slashParts[0],
+      feature: slashParts.slice(1).join(" / "),
+      title: slashParts.slice(1).join(" / "),
+      description,
+    };
+  }
+
+  return {
+    section: inferNativeSection(trimmed),
+    feature: normalizedHead,
+    title: normalizedHead,
+    description,
+  };
+}
+
+function inferNativeSection(text: string): string | undefined {
+  const lower = text.toLowerCase();
+  if (isReviewLikeText(text)) return "Quality";
+  if (/auth|login|signup|password|form|账户|登录|注册/.test(lower)) return "Auth";
+  if (/dashboard|overview|metric|summary|数据|概览|仪表盘/.test(lower)) return "Dashboard";
+  if (/setting|config|preference|设置|配置/.test(lower)) return "Settings";
+  if (/persist|storage|save|localstorage|保存|存储/.test(lower)) return "Persistence";
+  if (/ui|layout|style|responsive|界面|布局|样式/.test(lower)) return "Interface";
+  return "Feature";
+}
+
+function mapNativeTodoStatus(status: string | undefined): MissionTask["status"] {
+  const normalized = status?.trim().toLowerCase();
+  if (normalized === "completed" || normalized === "complete" || normalized === "done") {
+    return "done";
+  }
+  if (normalized === "in_progress" || normalized === "in-progress" || normalized === "running") {
+    return "running";
+  }
+  if (normalized === "reviewing" || normalized === "review") {
+    return "reviewing";
+  }
+  return "queued";
+}
+
+function mergeNativeTasks(existing: MissionTask[], incoming: MissionTask[]): MissionTask[] {
+  const merged = [...existing];
+
+  for (const task of incoming) {
+    const index = merged.findIndex((item) => nativeTaskKey(item) === nativeTaskKey(task));
+    if (index >= 0) {
+      merged[index] = {
+        ...merged[index]!,
+        ...task,
+        id: merged[index]!.id,
+        status:
+          merged[index]!.status === "running" && task.status === "queued"
+            ? "running"
+            : task.status,
+      };
+    } else {
+      merged.push(task);
+    }
+  }
+
+  return merged;
+}
+
+function nativeTaskKey(task: MissionTask): string {
+  return `${task.section ?? ""}:${task.feature ?? task.title}`.toLowerCase();
+}
+
+function resolveNativeSubagent(
+  subagentType: unknown,
+  text: string,
+  agents: AgentProfile[],
+): AgentProfile {
+  const requested = typeof subagentType === "string" ? subagentType.trim().toLowerCase() : "";
+  return (
+    agents.find((agent) => agent.id.toLowerCase() === requested) ??
+    agents.find((agent) => agent.name.toLowerCase() === requested) ??
+    agents.find((agent) => requested && requested.includes(agent.id.toLowerCase())) ??
+    findAgent(
+      agents,
+      isReviewLikeText(text)
+        ? "reviewer"
+        : isPlanningLikeText(text)
+          ? "planner"
+          : "builder",
+    )
+  );
+}
+
+function isReviewLikeText(text: string): boolean {
+  return /review|qa|test|verify|quality|acceptance|检查|测试|验证|审核/.test(
+    text.toLowerCase(),
+  );
+}
+
+function isPlanningLikeText(text: string): boolean {
+  return /plan|research|scope|requirements|context|规划|调研|需求|拆解/.test(
+    text.toLowerCase(),
+  );
+}
+
+function matchNativeTaskId(tasks: MissionTask[], text: string): string | undefined {
+  const tokens = tokenizeTaskText(text);
+  if (tokens.length === 0) {
+    return tasks.find((task) => task.status === "queued")?.id ?? tasks[0]?.id;
+  }
+
+  const scored = tasks
+    .map((task) => ({
+      task,
+      score: scoreTaskMatch(task, tokens),
+    }))
+    .sort((left, right) => right.score - left.score);
+
+  const best = scored[0];
+  if (best && best.score > 0) {
+    return best.task.id;
+  }
+
+  return tasks.find((task) => task.status === "queued")?.id ?? tasks[0]?.id;
+}
+
+function scoreTaskMatch(task: MissionTask, tokens: string[]): number {
+  const haystack = tokenizeTaskText(
+    [
+      task.section,
+      task.feature,
+      task.title,
+      task.description,
+      task.expectedArtifact,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+  const haystackSet = new Set(haystack);
+  return tokens.filter((token) => haystackSet.has(token)).length;
+}
+
+function tokenizeTaskText(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9\u4e00-\u9fa5]+/u)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2)
+    .filter((token) => !["the", "and", "for", "with", "this", "that", "into"].includes(token));
+}
+
+function slugifyTaskId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/gu, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+function isArtifactWriteEndEvent(event: unknown): boolean {
+  if (!event || typeof event !== "object") {
+    return false;
+  }
+
+  const value = event as Record<string, unknown>;
+  return (
+    value.event === "on_tool_end" &&
+    (value.name === "write_file" || value.name === "submit_artifact")
+  );
+}
+
+function isToolEndEvent(event: unknown, toolName: string): boolean {
+  if (!event || typeof event !== "object") {
+    return false;
+  }
+
+  const value = event as Record<string, unknown>;
+  return value.event === "on_tool_end" && value.name === toolName;
 }
 
 function isEarlyArtifactStreamEvent(event: unknown): boolean {
@@ -1501,6 +2072,19 @@ export async function runMissionIteration(
 
   const basePreview = previousPreview ?? buildMissionPreview(originalMission);
   const existingArtifacts = basePreview.artifacts ?? [];
+  if (isDeepAgentCompatibleModel(model)) {
+    return runNativeDeepAgentIteration(
+      originalMission,
+      followUpPrompt,
+      basePreview,
+      existingArtifacts,
+      provider,
+      model,
+      agentProfiles,
+      onProgress,
+    );
+  }
+
   const missionContext = [
     `Original mission: ${originalMission}`,
     `New user prompt: ${followUpPrompt}`,
@@ -1756,6 +2340,293 @@ export async function runMissionIteration(
       finalBrief: "The follow-up run failed, so MetaFlow did not update the artifact.",
     };
   }
+}
+
+async function runNativeDeepAgentIteration(
+  originalMission: string,
+  followUpPrompt: string,
+  basePreview: MissionPreview,
+  existingArtifacts: MissionArtifact[],
+  provider: MissionPreview["provider"] | undefined,
+  model: BaseLanguageModel,
+  agentProfiles: AgentProfile[],
+  onProgress?: (update: MissionProgressUpdate) => void | Promise<void>,
+): Promise<MissionPreview> {
+  let events = basePreview.events.some(
+    (event) => event.message === `User added a follow-up prompt: ${followUpPrompt}`,
+  )
+    ? [...basePreview.events]
+    : appendRuntimeEvent(
+        basePreview.events,
+        "task.started",
+        `User added a follow-up prompt: ${followUpPrompt}`,
+      );
+  events = appendRuntimeEvent(
+    events,
+    "task.started",
+    "Native DeepAgents is updating the mission from the follow-up prompt.",
+  );
+  const tasks = createFollowUpTasks(followUpPrompt);
+  await onProgress?.({
+    stage: "building",
+    preview: {
+      ...basePreview,
+      tasks: markTasksRunning(tasks, ["follow-up-build"]),
+      events,
+      artifacts: existingArtifacts,
+      mode: "deepagents",
+      provider,
+      finalBrief: "DeepAgents is editing the existing artifact.",
+    },
+  });
+
+  const input = createNativeFollowUpInput(
+    originalMission,
+    followUpPrompt,
+    existingArtifacts,
+  );
+  const agent = createArtifactHandoffDeepAgent(model) as DeepAgentRunner;
+  const streamed = await runNativeDeepAgentWithEvents(
+    agent,
+    input,
+    basePreview,
+    events,
+    provider,
+    agentProfiles,
+    onProgress,
+  );
+  events = streamed.events;
+  const output = extractDeepAgentOutput(streamed.result);
+  const nativeArtifacts = mergeArtifacts(
+    extractArtifactsFromText(output),
+    extractArtifactsFromDeepAgentFiles(streamed.result),
+  );
+  const nativeChanged = hasArtifactChanges(existingArtifacts, nativeArtifacts);
+  if (!streamed.wroteArtifact && (!nativeArtifacts.length || !nativeChanged)) {
+    const takeoverMessage = nativeArtifacts.length > 0 && !nativeChanged
+      ? "Native DeepAgents returned no changed artifact; direct artifact edit is taking over."
+      : streamed.wroteArtifactWithoutContent
+      ? "Native DeepAgents wrote a file without returning file content; direct artifact edit is taking over."
+      : "Native DeepAgents follow-up stalled on repeated reads; direct artifact edit is taking over.";
+    events = appendRuntimeEvent(
+      events,
+      "task.started",
+      takeoverMessage,
+    );
+    await onProgress?.({
+      stage: "building",
+      preview: {
+        ...basePreview,
+        tasks: markTasksRunning(tasks, ["follow-up-build"]),
+        events,
+        artifacts: existingArtifacts,
+        mode: "deepagents",
+        provider,
+        finalBrief: "Direct artifact edit is applying the follow-up.",
+      },
+    });
+
+    const directOutput = await runDirectFollowUpEdit(
+      originalMission,
+      followUpPrompt,
+      existingArtifacts,
+      findAgent(agentProfiles, "builder"),
+      model as unknown as MissionChatModel,
+    );
+    const directArtifacts = extractArtifactsFromText(directOutput);
+    const updatedArtifacts = mergeArtifacts(existingArtifacts, directArtifacts);
+    const error =
+      directArtifacts.length > 0
+        ? undefined
+        : streamed.error ?? "Follow-up did not produce an updated artifact.";
+    events = appendRuntimeEvent(
+      events,
+      error ? "mission.failed" : "mission.ready",
+      error ?? "Direct artifact edit completed the follow-up update.",
+    );
+
+    return buildFollowUpPreview(
+      basePreview,
+      tasks,
+      events,
+      existingArtifacts,
+      updatedArtifacts,
+      provider,
+      directOutput,
+      error,
+    );
+  }
+
+  const updatedArtifacts = mergeArtifacts(existingArtifacts, nativeArtifacts);
+  const error =
+    nativeArtifacts.length > 0 && nativeChanged
+      ? undefined
+      : streamed.error ?? "Follow-up did not produce an updated artifact.";
+  events = appendRuntimeEvent(
+    events,
+    error ? "mission.failed" : "mission.ready",
+    error ?? "Native DeepAgents completed the follow-up update.",
+  );
+
+  return buildFollowUpPreview(
+    basePreview,
+    tasks,
+    events,
+    existingArtifacts,
+    updatedArtifacts,
+    provider,
+    output,
+    error,
+  );
+}
+
+function createNativeFollowUpInput(
+  originalMission: string,
+  followUpPrompt: string,
+  artifacts: MissionArtifact[],
+) {
+  return {
+    messages: [
+      {
+        role: "user",
+        content: [
+          `Original mission: ${originalMission}`,
+          `Follow-up prompt: ${followUpPrompt}`,
+          "",
+          "Update the existing artifact files to satisfy the follow-up prompt.",
+          "Preserve existing behavior unless the follow-up explicitly changes it.",
+          "Do not create a planning or clarification page.",
+          "Write the changed files under /artifacts/ and call submit_artifact with complete file content.",
+          "For a single-file web app, update /artifacts/index.html.",
+        ].join("\n"),
+      },
+    ],
+    files: artifactsToDeepAgentFiles(artifacts),
+  };
+}
+
+async function runDirectFollowUpEdit(
+  originalMission: string,
+  followUpPrompt: string,
+  artifacts: MissionArtifact[],
+  agent: AgentProfile,
+  model: MissionChatModel,
+): Promise<string> {
+  const tasks = createFollowUpTasks(followUpPrompt);
+  return runIterationBuilderAgent(
+    originalMission,
+    followUpPrompt,
+    artifacts,
+    tasks,
+    agent,
+    model,
+    {
+      artifactKind: artifacts.some((artifact) => artifact.type === "html")
+        ? "web_app"
+        : undefined,
+      requiredSkills: ["artifact editing"],
+      selectedCapabilityIds: ["app-builder"],
+    },
+  );
+}
+
+function buildFollowUpPreview(
+  basePreview: MissionPreview,
+  tasks: MissionTask[],
+  events: MissionEvent[],
+  existingArtifacts: MissionArtifact[],
+  updatedArtifacts: MissionArtifact[],
+  provider: MissionPreview["provider"] | undefined,
+  finalOutput: string,
+  error?: string,
+): MissionPreview {
+  return {
+    ...basePreview,
+    tasks: completeAllTasks(tasks),
+    events,
+    runLogs: [
+      ...(basePreview.runLogs ?? []),
+      {
+        agent: "Native DeepAgents",
+        taskId: "follow-up-build",
+        level: error ? "error" : "info",
+        message: error
+          ? error
+          : `Updated ${Math.max(updatedArtifacts.length - existingArtifacts.length, 1)} artifact file(s).`,
+      },
+    ],
+    artifacts: updatedArtifacts,
+    mode: "deepagents",
+    provider,
+    finalOutput,
+    error,
+    finalBrief: error ?? "Updated the existing artifact from the follow-up prompt.",
+  };
+}
+
+function hasArtifactChanges(
+  existingArtifacts: MissionArtifact[],
+  candidateArtifacts: MissionArtifact[],
+): boolean {
+  if (candidateArtifacts.length === 0) {
+    return false;
+  }
+
+  return candidateArtifacts.some((candidate) => {
+    const existing = existingArtifacts.find(
+      (artifact) => artifact.filename === candidate.filename,
+    );
+    return !existing || existing.content.trim() !== candidate.content.trim();
+  });
+}
+
+function artifactsToDeepAgentFiles(
+  artifacts: MissionArtifact[],
+): Record<string, DeepAgentSkillFile> {
+  const now = new Date().toISOString();
+  return Object.fromEntries(
+    artifacts.map((artifact) => [
+      `/artifacts/${sanitizeFilename(artifact.filename)}`,
+      {
+        path: `/artifacts/${sanitizeFilename(artifact.filename)}`,
+        ...createDeepAgentTextFile(artifact.content, mimeTypeForArtifact(artifact), now),
+      },
+    ]),
+  );
+}
+
+function mimeTypeForArtifact(artifact: MissionArtifact): string {
+  if (artifact.type === "html") return "text/html";
+  if (artifact.type === "css") return "text/css";
+  if (artifact.type === "json") return "application/json";
+  if (artifact.type === "markdown") return "text/markdown";
+  return "text/plain";
+}
+
+function createFollowUpTasks(followUpPrompt: string): MissionTask[] {
+  return [
+    {
+      id: "follow-up-build",
+      title: "Update artifact",
+      description: `Apply follow-up prompt: ${followUpPrompt}`,
+      assignedTo: "Native DeepAgents",
+      assignedAgentId: "builder",
+      requiredSkills: ["artifact editing"],
+      expectedArtifact: "updated user artifact",
+      status: "queued",
+    },
+    {
+      id: "follow-up-review",
+      title: "Review update",
+      description: "Check that the updated artifact still satisfies the original mission and follow-up.",
+      assignedTo: "Meta Agent",
+      assignedAgentId: "reviewer",
+      requiredSkills: ["quality review"],
+      dependencies: ["follow-up-build"],
+      expectedArtifact: "accepted update",
+      status: "queued",
+    },
+  ];
 }
 
 async function generateMissionArtifacts(
@@ -2718,6 +3589,24 @@ function extractStreamEventFiles(event: unknown): Record<string, unknown> {
   }
 
   return {};
+}
+
+function extractStreamText(event: unknown): string {
+  if (!event || typeof event !== "object") {
+    return "";
+  }
+
+  const value = event as Record<string, unknown>;
+  const data = value.data;
+  if (!data || typeof data !== "object") {
+    return "";
+  }
+
+  const record = data as Record<string, unknown>;
+  return [record.input, record.output]
+    .map((item) => extractMessageContent(item))
+    .filter(Boolean)
+    .join("\n");
 }
 
 function extractFilesFromSubmitArtifactOutput(output: unknown): Record<string, unknown> {
