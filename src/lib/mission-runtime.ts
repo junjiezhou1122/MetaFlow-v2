@@ -1,4 +1,4 @@
-import { createDeepAgent } from "deepagents";
+import { CompositeBackend, StateBackend, createDeepAgent } from "deepagents";
 import { tool } from "langchain";
 import { z } from "zod";
 import type { SubAgent } from "deepagents";
@@ -6,6 +6,7 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import type { BaseLanguageModel } from "@langchain/core/language_models/base";
 
 import { createDefaultAgentProfiles } from "./agent-registry";
+import { createMemoryBackend } from "./memory-store";
 
 export { createDefaultAgentProfiles } from "./agent-registry";
 
@@ -461,8 +462,19 @@ export function createMetaDeepAgent(
     systemPrompt: definition.systemPrompt,
     tools: createMetaAgentTools(registry),
     skills: ["/skills/"],
+    memory: ["/memories/preferences.md", "/memories/meta-agent-lessons.md"],
+    backend: createMetaAgentBackend(),
     subagents: definition.subagents,
   });
+}
+
+function createMetaAgentBackend() {
+  return new CompositeBackend(
+    new StateBackend(),
+    {
+      "/memories/": createMemoryBackend(),
+    },
+  );
 }
 
 function createArtifactHandoffDeepAgent(model?: BaseLanguageModel) {

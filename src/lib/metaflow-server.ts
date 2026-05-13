@@ -13,6 +13,7 @@ import {
   runMultiAgentMission,
 } from "./mission-runtime";
 import { createMissionChatModel } from "./model-factory";
+import { createMetaAgentMemoryFiles } from "./memory-store";
 import { createSkillLibraryAgent, loadWorkspaceSkills } from "./skill-registry";
 import { FileSettingsStore } from "./settings-store";
 import {
@@ -79,6 +80,7 @@ async function executeMission(mission: StoredMission, settingsInput: unknown) {
       : sanitizeProviderSettings(null);
   const model = createMissionChatModel(rawSettings);
   const agents = await loadRuntimeAgents(mission.input);
+  await createMetaAgentMemoryFiles();
 
   try {
     await missionStore.update(mission.id, {
@@ -151,6 +153,7 @@ async function executeMissionIteration(
       : sanitizeProviderSettings(null);
   const model = createMissionChatModel(rawSettings);
   const agents = await loadRuntimeAgents([mission.input, prompt].join("\n"));
+  await createMetaAgentMemoryFiles();
 
   try {
     await missionStore.update(mission.id, {

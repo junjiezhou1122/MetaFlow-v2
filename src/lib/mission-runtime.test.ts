@@ -1,13 +1,29 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("deepagents", () => ({
+  CompositeBackend: class {
+    routePrefixes: string[];
+    constructor(
+      readonly defaultBackend: unknown,
+      readonly routes: Record<string, unknown>,
+    ) {
+      this.routePrefixes = Object.keys(routes);
+    }
+  },
+  StateBackend: class {},
   createDeepAgent: ({
     model,
+    memory,
+    backend,
     tools,
   }: {
     model: { invoke(input: unknown): Promise<unknown> };
+    memory?: string[];
+    backend?: unknown;
     tools?: Array<{ name?: string }>;
   }) => ({
+    __memory: memory,
+    __backend: backend,
     __toolNames: tools?.map((tool) => tool.name),
     invoke: (input: unknown) => model.invoke(input),
     streamEvents:
@@ -26,6 +42,7 @@ import {
   buildMissionPreview,
   createDefaultCapabilityRegistry,
   createDefaultAgentProfiles,
+  createMetaDeepAgent,
   createMetaAgentDefinition,
   __missionRuntimeTestUtils,
   extractArtifactsFromText,
@@ -92,6 +109,19 @@ describe("mission runtime", () => {
     expect(handoff.__toolNames).not.toContain("assign_task");
     expect(handoff.__toolNames).not.toContain("search_capabilities");
     expect(handoff.__toolNames).not.toContain("create_ephemeral_agent");
+  });
+
+  it("wires persistent memory files into the native Meta DeepAgent", () => {
+    const agent = createMetaDeepAgent(
+      createDefaultCapabilityRegistry(),
+      { invoke: async () => ({}) } as never,
+    ) as unknown as { __memory?: string[]; __backend?: { routePrefixes?: string[] } };
+
+    expect(agent.__memory).toEqual([
+      "/memories/preferences.md",
+      "/memories/meta-agent-lessons.md",
+    ]);
+    expect(agent.__backend?.routePrefixes).toContain("/memories/");
   });
 
   it("keeps artifact handoff input free of skill documents", () => {
