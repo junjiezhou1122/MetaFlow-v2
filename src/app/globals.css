@@ -266,6 +266,10 @@ button {
   width: min(1240px, 100%);
 }
 
+.memoryCenter .memoryPanel {
+  width: min(1320px, 100%);
+}
+
 .settingsTitle {
   border-bottom: 1px solid var(--line);
   color: var(--muted);
@@ -398,6 +402,36 @@ button {
 
 .agentEditor textarea {
   min-height: 230px;
+}
+
+.memoryGrid {
+  grid-template-columns: 380px 1fr;
+}
+
+.memoryFileList {
+  max-height: calc(100vh - 210px);
+  overflow: auto;
+}
+
+.memoryFileList button {
+  min-height: 86px;
+}
+
+.memoryEditor textarea {
+  min-height: calc(100vh - 360px);
+}
+
+.memoryEditor input[readonly],
+.memoryEditor textarea[readonly] {
+  background: rgb(18 18 18 / 0.035);
+  color: var(--muted);
+}
+
+.settingsActions button:disabled {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--muted);
+  cursor: default;
 }
 
 .agentSkillCards {

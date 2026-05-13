@@ -124,6 +124,18 @@ describe("mission runtime", () => {
     expect(agent.__backend?.routePrefixes).toContain("/memories/");
   });
 
+  it("marks unconfigured preview missions as failed instead of ready", async () => {
+    const preview = await runMultiAgentMission(
+      "Build a small app",
+      { provider: "openai-compatible", configured: false, baseUrl: "", keyPreview: "not set", model: "" },
+      null,
+      createDefaultAgentProfiles(),
+    );
+
+    expect(preview.error).toBe("No live model is configured.");
+    expect(preview.artifacts).toEqual([]);
+  });
+
   it("keeps artifact handoff input free of skill documents", () => {
     const input = __missionRuntimeTestUtils.createNativeArtifactClosureInput(
       "生成一个网页应用",

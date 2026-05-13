@@ -13,7 +13,7 @@ import {
   runMultiAgentMission,
 } from "./mission-runtime";
 import { createMissionChatModel } from "./model-factory";
-import { createMetaAgentMemoryFiles } from "./memory-store";
+import { createMetaAgentMemoryFiles, writeMissionMemorySummary } from "./memory-store";
 import { createSkillLibraryAgent, loadWorkspaceSkills } from "./skill-registry";
 import { FileSettingsStore } from "./settings-store";
 import {
@@ -105,7 +105,7 @@ async function executeMission(mission: StoredMission, settingsInput: unknown) {
       },
     );
 
-    await missionStore.updateIfRunActive(mission.id, runId, {
+    const completedMission = await missionStore.updateIfRunActive(mission.id, runId, {
       status: preview.error ? "failed" : "ready",
       stage: preview.error ? "failed" : "done",
       preview,
@@ -113,12 +113,15 @@ async function executeMission(mission: StoredMission, settingsInput: unknown) {
       runningSince: undefined,
       activeRunId: undefined,
     });
+    if (completedMission) {
+      await writeMissionMemorySummary(completedMission);
+    }
   } catch (error) {
     const latestMission = (await missionStore.get(mission.id)) ?? mission;
     const basePreview = latestMission.preview ?? buildMissionPreview(latestMission.input);
     const message =
       error instanceof Error ? error.message : "Mission execution failed.";
-    await missionStore.updateIfRunActive(mission.id, runId, {
+    const failedMission = await missionStore.updateIfRunActive(mission.id, runId, {
       status: "failed",
       stage: "failed",
       preview: appendMissionEvent(basePreview, "mission.failed", message),
@@ -126,6 +129,9 @@ async function executeMission(mission: StoredMission, settingsInput: unknown) {
       runningSince: undefined,
       activeRunId: undefined,
     });
+    if (failedMission) {
+      await writeMissionMemorySummary(failedMission);
+    }
   } finally {
     stopWatchdog();
   }
@@ -181,7 +187,7 @@ async function executeMissionIteration(
       },
     );
 
-    await missionStore.updateIfRunActive(mission.id, runId, {
+    const completedMission = await missionStore.updateIfRunActive(mission.id, runId, {
       status: preview.error ? "failed" : "ready",
       stage: preview.error ? "failed" : "done",
       preview,
@@ -189,11 +195,14 @@ async function executeMissionIteration(
       runningSince: undefined,
       activeRunId: undefined,
     });
+    if (completedMission) {
+      await writeMissionMemorySummary(completedMission);
+    }
   } catch (error) {
     const latestMission = (await missionStore.get(mission.id)) ?? mission;
     const basePreview = latestMission.preview ?? buildMissionPreview(latestMission.input);
     const message = error instanceof Error ? error.message : "Mission update failed.";
-    await missionStore.updateIfRunActive(mission.id, runId, {
+    const failedMission = await missionStore.updateIfRunActive(mission.id, runId, {
       status: "failed",
       stage: "failed",
       preview: appendMissionEvent(basePreview, "mission.failed", message),
@@ -201,6 +210,9 @@ async function executeMissionIteration(
       runningSince: undefined,
       activeRunId: undefined,
     });
+    if (failedMission) {
+      await writeMissionMemorySummary(failedMission);
+    }
   } finally {
     stopWatchdog();
   }

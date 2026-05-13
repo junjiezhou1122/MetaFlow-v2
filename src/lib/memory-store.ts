@@ -12,6 +12,7 @@ import type {
   ReadResult,
   WriteResult,
 } from "deepagents";
+import type { StoredMission } from "./mission-store";
 
 const defaultDataDir = join(process.cwd(), ".metaflow-data");
 const memoriesDirname = "memories";
@@ -99,6 +100,11 @@ export class FileMemoryStore {
   }
 }
 
+export type MemoryFile = {
+  path: string;
+  content: string;
+};
+
 export async function createMetaAgentMemoryFiles(
   store = new FileMemoryStore(),
 ): Promise<string[]> {
@@ -109,6 +115,104 @@ export async function createMetaAgentMemoryFiles(
     "/memories/preferences.md",
     "/memories/meta-agent-lessons.md",
   ];
+}
+
+export async function listMemoryFiles(
+  store = new FileMemoryStore(),
+): Promise<MemoryFile[]> {
+  await createMetaAgentMemoryFiles(store);
+  const paths = await store.listFiles();
+  return Promise.all(
+    paths.map(async (path) => ({
+      path,
+      content: await store.read(path),
+    })),
+  );
+}
+
+export async function writeMissionMemorySummary(
+  mission: StoredMission,
+  store = new FileMemoryStore(),
+): Promise<string> {
+  const content = formatMissionMemorySummary(mission);
+  const path = `missions/${mission.id}/summary.md`;
+  await store.write(path, content);
+  return path;
+}
+
+export function formatMissionMemorySummary(mission: StoredMission): string {
+  const preview = mission.preview;
+  const tasks = preview?.tasks ?? [];
+  const artifacts = preview?.artifacts ?? [];
+  const events = preview?.events ?? [];
+  const runLogs = preview?.runLogs ?? [];
+  const lines = [
+    `# ${mission.title}`,
+    "",
+    `- Mission ID: ${mission.id}`,
+    `- Status: ${mission.status}`,
+    `- Stage: ${mission.stage}`,
+    `- Created: ${mission.createdAt}`,
+    `- Updated: ${mission.updatedAt}`,
+    "",
+    "## User Request",
+    "",
+    mission.input || "No request recorded.",
+    "",
+    "## Final Brief",
+    "",
+    preview?.finalBrief || mission.error || "No final brief recorded yet.",
+    "",
+    "## Feature Tasks",
+    "",
+    tasks.length
+      ? tasks
+          .map((task) => {
+            const featurePath = [task.section, task.feature].filter(Boolean).join(" / ");
+            const prefix = featurePath || task.title;
+            const details = [
+              task.description,
+              `assigned to ${task.assignedTo}`,
+              `status ${task.status}`,
+              task.expectedArtifact ? `artifact ${task.expectedArtifact}` : "",
+            ].filter(Boolean);
+            return `- ${prefix}: ${details.join("; ")}`;
+          })
+          .join("\n")
+      : "- No feature tasks recorded.",
+    "",
+    "## Artifacts",
+    "",
+    artifacts.length
+      ? artifacts
+          .map(
+            (artifact) =>
+              `- ${artifact.filename}: ${artifact.title || artifact.description || artifact.type}`,
+          )
+          .join("\n")
+      : "- No artifacts recorded.",
+    "",
+    "## Recent Events",
+    "",
+    events.length
+      ? events
+          .slice(-10)
+          .map((event) => `- ${event.type}: ${event.message}`)
+          .join("\n")
+      : "- No events recorded.",
+    "",
+    "## Run Logs",
+    "",
+    runLogs.length
+      ? runLogs
+          .slice(-10)
+          .map((log) => `- ${log.level} / ${log.agent} / ${log.taskId}: ${log.message}`)
+          .join("\n")
+      : "- No run logs recorded.",
+    "",
+  ];
+
+  return `${lines.join("\n")}\n`;
 }
 
 export function createMemoryBackend(store = new FileMemoryStore()): BackendProtocolV2 {

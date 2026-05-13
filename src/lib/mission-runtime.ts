@@ -627,6 +627,7 @@ export async function runMultiAgentMission(
         "No live model is configured, so MetaFlow did not generate artifacts. Add a provider key to run DeepAgents for real output.",
       mode: "preview",
       provider,
+      error: "No live model is configured.",
     };
   }
 

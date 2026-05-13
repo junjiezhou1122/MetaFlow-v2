@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   formatMissionTimestamp,
@@ -28,14 +28,26 @@ const lanes = [
   { id: "done", label: "Done" },
 ];
 
-type ActiveView = "mission" | "mission-space" | "mission-detail" | "library" | "agents" | "settings";
+type ActiveView =
+  | "mission"
+  | "mission-space"
+  | "mission-detail"
+  | "library"
+  | "agents"
+  | "memory"
+  | "settings";
 type MissionDetailTab = "run" | "tasks" | "logs";
+type MemoryFile = {
+  path: string;
+  content: string;
+};
 
 const navItems: Array<{ id: Exclude<ActiveView, "mission-detail">; label: string }> = [
   { id: "mission", label: "Mission" },
   { id: "mission-space", label: "Mission Space" },
   { id: "library", label: "Library" },
   { id: "agents", label: "Agents" },
+  { id: "memory", label: "Memory" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -65,6 +77,12 @@ export default function Home() {
   const [agentDraft, setAgentDraft] = useState<AgentProfile | null>(null);
   const [agentSaved, setAgentSaved] = useState(false);
   const [appSaved, setAppSaved] = useState(false);
+  const [memoryFiles, setMemoryFiles] = useState<MemoryFile[]>([]);
+  const [activeMemoryPath, setActiveMemoryPath] = useState("");
+  const [memoryDraft, setMemoryDraft] = useState("");
+  const [memorySaved, setMemorySaved] = useState(false);
+  const [memoryError, setMemoryError] = useState("");
+  const activeMemoryPathRef = useRef("");
 
   const visibleAgents = agents;
   const activeAgent =
@@ -76,27 +94,9 @@ export default function Home() {
     missions.find((item) => item.id === activeMissionId) ?? missions[0] ?? null;
   const missionHistory = useMemo(() => listMissionHistory(missions), [missions]);
   const activeApp = apps.find((app) => app.id === activeAppId) ?? apps[0] ?? null;
+  const activeMemory =
+    memoryFiles.find((file) => file.path === activeMemoryPath) ?? memoryFiles[0] ?? null;
   const hasRunningMission = missions.some((mission) => mission.status === "running");
-
-  useEffect(() => {
-    void refreshMissions();
-    void refreshApps();
-    void refreshAgents();
-    void refreshMarketAgents();
-    void refreshSettings();
-  }, []);
-
-  useEffect(() => {
-    if (!hasRunningMission && activeView !== "mission-space" && activeView !== "mission-detail") {
-      return;
-    }
-
-    const timer = window.setInterval(() => {
-      void refreshMissions();
-    }, 1600);
-
-    return () => window.clearInterval(timer);
-  }, [activeView, hasRunningMission]);
 
   async function refreshMissions() {
     try {
@@ -164,6 +164,51 @@ export default function Home() {
     }
   }
 
+  const refreshMemory = useCallback(async () => {
+    try {
+      const response = await fetch("/api/memory", { cache: "no-store" });
+      const data = (await response.json()) as { memories?: MemoryFile[] };
+      if (response.ok && Array.isArray(data.memories)) {
+        setMemoryFiles(data.memories);
+        const selectedMemory =
+          data.memories.find((memory) => memory.path === activeMemoryPathRef.current) ??
+          data.memories[0] ??
+          null;
+        activeMemoryPathRef.current = selectedMemory?.path ?? "";
+        setActiveMemoryPath(selectedMemory?.path ?? "");
+        setMemoryDraft(selectedMemory?.content ?? "");
+      }
+    } catch {
+      setMemoryError("Could not load memory files.");
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void refreshMissions();
+      void refreshApps();
+      void refreshAgents();
+      void refreshMarketAgents();
+      void refreshSettings();
+      void refreshMemory();
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [refreshMemory]);
+
+  useEffect(() => {
+    if (!hasRunningMission && activeView !== "mission-space" && activeView !== "mission-detail") {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void refreshMissions();
+      void refreshMemory();
+    }, 1600);
+
+    return () => window.clearInterval(timer);
+  }, [activeView, hasRunningMission, refreshMemory]);
+
   async function submitMission(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -193,6 +238,7 @@ export default function Home() {
       setMissionDetailTab("run");
       setActiveView("mission-space");
       void refreshMissions();
+      void refreshMemory();
     } catch (error) {
       setError(error instanceof Error ? error.message : "Mission failed to start.");
     } finally {
@@ -228,6 +274,7 @@ export default function Home() {
       setMissionDetailTab("run");
       setActiveView("mission-detail");
       void refreshMissions();
+      void refreshMemory();
     } catch (error) {
       setError(error instanceof Error ? error.message : "Mission update failed.");
     } finally {
@@ -385,6 +432,50 @@ export default function Home() {
     setAgentSaved(true);
   }
 
+  function selectMemory(path: string) {
+    const file = memoryFiles.find((item) => item.path === path) ?? null;
+    activeMemoryPathRef.current = path;
+    setActiveMemoryPath(path);
+    setMemoryDraft(file?.content ?? "");
+    setMemorySaved(false);
+    setMemoryError("");
+  }
+
+  function updateMemoryDraft(value: string) {
+    setMemoryDraft(value);
+    setMemorySaved(false);
+  }
+
+  async function saveMemory() {
+    if (!activeMemory) {
+      return;
+    }
+
+    setMemoryError("");
+    setMemorySaved(false);
+    try {
+      const response = await fetch("/api/memory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: activeMemory.path, content: memoryDraft }),
+      });
+      const data = (await response.json()) as { memory?: MemoryFile; error?: string };
+      if (!response.ok || !data.memory) {
+        setMemoryError(data.error || "Could not save memory.");
+        return;
+      }
+
+      setMemoryFiles((current) =>
+        current.map((file) =>
+          file.path === data.memory!.path ? data.memory! : file,
+        ),
+      );
+      setMemorySaved(true);
+    } catch (error) {
+      setMemoryError(error instanceof Error ? error.message : "Could not save memory.");
+    }
+  }
+
   const visiblePreview = activeMission?.preview ?? createEmptyPreview(activeMission?.input);
 
   return (
@@ -476,6 +567,20 @@ export default function Home() {
             onSelectAgent={selectAgent}
             onSelectAgentView={setAgentView}
             onSelectMarketAgent={setSelectedMarketAgentId}
+          />
+        )}
+
+        {activeView === "memory" && (
+          <MemoryView
+            activeMemory={activeMemory}
+            draft={memoryDraft}
+            error={memoryError}
+            isSaved={memorySaved}
+            memories={memoryFiles}
+            onMemoryChange={updateMemoryDraft}
+            onRefresh={refreshMemory}
+            onSave={saveMemory}
+            onSelectMemory={selectMemory}
           />
         )}
 
@@ -992,6 +1097,85 @@ function AgentsView(props: {
   );
 }
 
+function MemoryView(props: {
+  activeMemory: MemoryFile | null;
+  draft: string;
+  error: string;
+  isSaved: boolean;
+  memories: MemoryFile[];
+  onMemoryChange: (value: string) => void;
+  onRefresh: () => void | Promise<void>;
+  onSave: () => void | Promise<void>;
+  onSelectMemory: (path: string) => void;
+}) {
+  const editable = props.activeMemory ? isEditableMemoryPath(props.activeMemory.path) : false;
+  const missionMemories = props.memories.filter((memory) =>
+    memory.path.startsWith("missions/"),
+  ).length;
+
+  return (
+    <div className="agentsCenter memoryCenter">
+      <section className="settingsPanel agentPanel memoryPanel">
+        <div className="agentRegistryHeader">
+          <div>
+            <strong>Memory</strong>
+            <span>
+              {props.memories.length} files / {missionMemories} mission summaries
+            </span>
+          </div>
+          <button className="secondaryAction" type="button" onClick={() => void props.onRefresh()}>
+            Refresh
+          </button>
+        </div>
+
+        <div className="agentEditorGrid memoryGrid">
+          <div className="agentProfileList memoryFileList">
+            {props.memories.map((memory) => (
+              <button
+                className={props.activeMemory?.path === memory.path ? "selected" : ""}
+                key={memory.path}
+                onClick={() => props.onSelectMemory(memory.path)}
+                type="button"
+              >
+                <strong>{memoryLabel(memory.path)}</strong>
+                <span>{memory.path}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="agentEditor memoryEditor">
+            {props.activeMemory ? (
+              <>
+                <label>
+                  Path
+                  <input readOnly value={props.activeMemory.path} />
+                </label>
+                <label>
+                  Content
+                  <textarea
+                    readOnly={!editable}
+                    rows={18}
+                    value={props.draft}
+                    onChange={(event) => props.onMemoryChange(event.target.value)}
+                  />
+                </label>
+                <div className="settingsActions">
+                  <span>{props.error || (props.isSaved ? "Saved" : editable ? "" : "Read only")}</span>
+                  <button disabled={!editable} type="button" onClick={() => void props.onSave()}>
+                    Save Memory
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p>No memory files yet.</p>
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function RunView(props: {
   appSaved: boolean;
   error: string;
@@ -1289,6 +1473,25 @@ function splitList(value: string): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function isEditableMemoryPath(path: string): boolean {
+  return path === "users/default/preferences.md" || path === "agents/meta-agent/lessons.md";
+}
+
+function memoryLabel(path: string): string {
+  if (path === "users/default/preferences.md") {
+    return "User Preferences";
+  }
+  if (path === "agents/meta-agent/lessons.md") {
+    return "Meta Agent Lessons";
+  }
+  if (path.startsWith("missions/") && path.endsWith("/summary.md")) {
+    const missionId = path.split("/")[1] ?? "mission";
+    return `Mission ${missionId.slice(0, 8)}`;
+  }
+
+  return path.split("/").at(-1) || path;
 }
 
 function downloadPackage(artifacts: MissionArtifact[]) {
